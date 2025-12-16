@@ -33,3 +33,8 @@ secrets.json
 private_key.pem
 *.pem
 *.key
+
+# IDE
+.idea/
+*.swp
+*.swo

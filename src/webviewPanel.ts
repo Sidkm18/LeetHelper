@@ -1,5 +1,13 @@
 import * as vscode from 'vscode';
 import { LeetCodeApi, QuestionDetail } from './leetcodeApi';
+import DOMPurify from 'isomorphic-dompurify';
+
+// Allowlist for difficulty values to prevent CSS class injection
+const ALLOWED_DIFFICULTIES = ['easy', 'medium', 'hard'];
+function getSafeDifficulty(difficulty: string): string {
+    const lower = difficulty.toLowerCase();
+    return ALLOWED_DIFFICULTIES.includes(lower) ? lower : 'unknown';
+}
 
 export class LeetCodeWebview {
     public static currentPanel: LeetCodeWebview | undefined;
@@ -62,8 +70,9 @@ export class LeetCodeWebview {
         <html lang="en">
         <head>
             <meta charset="UTF-8">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https://leetcode.com https://assets.leetcode.com; script-src 'none';">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>${question.title}</title>
+            <title>${DOMPurify.sanitize(question.title, { ALLOWED_TAGS: [] })}</title>
             <style>
                 body {
                     font-family: var(--vscode-font-family);
@@ -124,12 +133,12 @@ export class LeetCodeWebview {
             </style>
         </head>
         <body>
-            <h1>${question.questionId}. ${question.title}</h1>
+            <h1>${DOMPurify.sanitize(question.questionId, { ALLOWED_TAGS: [] })}. ${DOMPurify.sanitize(question.title, { ALLOWED_TAGS: [] })}</h1>
             <div class="meta">
-                <span class="difficulty ${question.difficulty.toLowerCase()}">${question.difficulty}</span>
+                <span class="difficulty ${getSafeDifficulty(question.difficulty)}">${DOMPurify.sanitize(question.difficulty, { ALLOWED_TAGS: [] })}</span>
             </div>
             <hr/>
-            <div class="content">${question.content}</div>
+            <div class="content">${DOMPurify.sanitize(question.content)}</div>
         </body>
         </html>`;
     }

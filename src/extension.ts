@@ -6,8 +6,21 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { LeetCodeCodeLensProvider } from './codelensProvider';
 
-export function activate(context: vscode.ExtensionContext) {
-    console.log('LeetHelp is now active!');
+export async function activate(context: vscode.ExtensionContext) {
+    // Hello World command removed
+
+    // Initialize API with SecretStorage
+    const api = LeetCodeApi.getInstance();
+    await api.initialize(context.secrets);
+
+    // Migration: Check for legacy config cookie
+    const config = vscode.workspace.getConfiguration('leethelp');
+    const legacyCookie = config.get<string>('sessionCookie');
+    if (legacyCookie && legacyCookie.trim() !== '') {
+        await api.setCookie(legacyCookie);
+        await config.update('sessionCookie', undefined, true); // Remove from settings
+        vscode.window.showInformationMessage('LeetCode session migrated to secure storage.');
+    }
 
     // Tree View Provider
     const treeProvider = new LeetCodeTreeProvider();
@@ -50,8 +63,10 @@ export function activate(context: vscode.ExtensionContext) {
                 if (selected) {
                     vscode.commands.executeCommand('leethelp.openProblem', (selected as any).formattedProblem);
                 }
-            } catch (error) {
-                vscode.window.showErrorMessage(`Search failed: ${error}`);
+            } catch (error: any) {
+                const api = LeetCodeApi.getInstance();
+                api.log(`Search error: ${error.message || error}`);
+                vscode.window.showErrorMessage('Search failed. Check Output panel for details.');
             }
         });
     }));
@@ -75,15 +90,19 @@ export function activate(context: vscode.ExtensionContext) {
         });
 
         if (session) {
+            if (!session.includes('csrftoken=') || !session.includes('LEETCODE_SESSION=')) {
+                vscode.window.showErrorMessage('Invalid Cookie: Missing "csrftoken" or "LEETCODE_SESSION". Please copy the full Cookie header value.');
+                return;
+            }
+
             // Update configuration immediately to test it
-            await vscode.workspace.getConfiguration('leethelp').update('sessionCookie', session, true);
+            await api.setCookie(session);
 
             vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: 'Verifying Session...',
                 cancellable: false
             }, async () => {
-                const api = LeetCodeApi.getInstance();
                 const user = await api.getUser();
 
                 if (user) {
@@ -91,10 +110,17 @@ export function activate(context: vscode.ExtensionContext) {
                     treeProvider.refresh();
                 } else {
                     vscode.window.showErrorMessage('Login failed. Please check your cookie and try again.');
-                    // Optionally clear the invalid cookie, but better to let them retry or keep it if it was a minor typo they can fix manually in settings
+                    await api.deleteCookie(); // Clear invalid cookie
                 }
             });
         }
+    }));
+
+    // Sign Out Command
+    context.subscriptions.push(vscode.commands.registerCommand('leethelp.signOut', async () => {
+        await api.deleteCookie();
+        vscode.window.showInformationMessage('Successfully signed out.');
+        treeProvider.refresh();
     }));
 
     // Open Problem Command
@@ -125,11 +151,26 @@ export function activate(context: vscode.ExtensionContext) {
                         const workspaceFolders = vscode.workspace.workspaceFolders;
                         const rootPath = workspaceFolders ? workspaceFolders[0].uri.fsPath : '/tmp';
                         const ext = getExtension(snippet.langSlug);
+                        if (!/^[a-z0-9-]+$/.test(question.titleSlug)) {
+                            vscode.window.showErrorMessage('Invalid problem slug: Potential path traversal detected.');
+                            return;
+                        }
                         const fileName = `${question.titleSlug}${ext}`;
                         const filePath = path.join(rootPath, fileName);
+                        
+                        // Security: Double-check resolved path stays within workspace
+                        const resolvedPath = path.resolve(filePath);
+                        const resolvedRoot = path.resolve(rootPath);
+                        if (!resolvedPath.startsWith(resolvedRoot + path.sep) && resolvedPath !== resolvedRoot) {
+                            vscode.window.showErrorMessage('Security error: Path traversal detected.');
+                            return;
+                        }
 
-                        if (!fs.existsSync(filePath)) {
-                            fs.writeFileSync(filePath, snippet.code);
+                        try {
+                            fs.writeFileSync(filePath, snippet.code, { flag: 'wx' });
+                        } catch (err: any) {
+                            if (err.code !== 'EEXIST') throw err;
+                            // File exists, continue to open it
                         }
 
                         const doc = await vscode.workspace.openTextDocument(filePath);
@@ -137,8 +178,10 @@ export function activate(context: vscode.ExtensionContext) {
                     }
                 }
             });
-        } catch (error) {
-            vscode.window.showErrorMessage(`Error opening problem: ${error}`);
+        } catch (error: any) {
+            const api = LeetCodeApi.getInstance();
+            api.log(`Error opening problem: ${error.message || error}`);
+            vscode.window.showErrorMessage('Error opening problem. Check Output panel for details.');
         }
     }));
 
@@ -168,7 +211,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Fetch detail to get questionId and exampleTestcases
             const detail = await api.getProblemDetail(slug);
 
-            vscode.window.withProgress({
+            await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: 'Running Code...',
                 cancellable: false
@@ -222,7 +265,9 @@ export function activate(context: vscode.ExtensionContext) {
                         outputChannel.appendLine('========================================');
                     } catch (err: any) {
                         outputChannel.appendLine(`Error formatting output: ${err.message}`);
-                        outputChannel.appendLine(`Raw Result: ${JSON.stringify(result, null, 2)}`);
+                        // Security: Only log safe, known fields instead of raw result
+                        const safeFields = { state: result.state, status_msg: result.status_msg };
+                        outputChannel.appendLine(`Result state: ${JSON.stringify(safeFields)}`);
                     }
 
                     if (result.correct_answer) {
@@ -235,8 +280,16 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             });
 
-        } catch (error) {
-            vscode.window.showErrorMessage(`Error running code: ${error}`);
+        } catch (error: any) {
+            if (error.message && (error.message.includes('401') || error.message.includes('403') || error.message.includes('Auth'))) {
+                const selection = await vscode.window.showErrorMessage('Session Expired: Please sign in again.', 'Sign In');
+                if (selection === 'Sign In') {
+                    vscode.commands.executeCommand('leethelp.signIn');
+                }
+            } else {
+                api.log(`Error running code: ${error.message || error}`);
+                vscode.window.showErrorMessage('Error running code. Check Output panel for details.');
+            }
         }
     }));
 
@@ -265,7 +318,7 @@ export function activate(context: vscode.ExtensionContext) {
             const api = LeetCodeApi.getInstance();
             const detail = await api.getProblemDetail(slug);
 
-            vscode.window.withProgress({
+            await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: 'Submitting Code...',
                 cancellable: false
@@ -310,15 +363,25 @@ export function activate(context: vscode.ExtensionContext) {
                         outputChannel.appendLine('========================================');
                     } catch (err: any) {
                         outputChannel.appendLine(`Error formatting output: ${err.message}`);
-                        outputChannel.appendLine(`Raw Result: ${JSON.stringify(result, null, 2)}`);
+                        // Security: Only log safe, known fields instead of raw result
+                        const safeFields = { state: result.state, status_msg: result.status_msg };
+                        outputChannel.appendLine(`Result state: ${JSON.stringify(safeFields)}`);
                     }
 
                 } else {
                     vscode.window.showErrorMessage(`Submission Failed: ${result.error_msg || result.state || 'Timeout'}`);
                 }
             });
-        } catch (error) {
-            vscode.window.showErrorMessage(`Error submitting code: ${error}`);
+        } catch (error: any) {
+            if (error.message && (error.message.includes('401') || error.message.includes('403') || error.message.includes('Auth'))) {
+                const selection = await vscode.window.showErrorMessage('Session Expired: Please sign in again.', 'Sign In');
+                if (selection === 'Sign In') {
+                    vscode.commands.executeCommand('leethelp.signIn');
+                }
+            } else {
+                api.log(`Error submitting code: ${error.message || error}`);
+                vscode.window.showErrorMessage('Error submitting code. Check Output panel for details.');
+            }
         }
     }));
 }
@@ -329,12 +392,32 @@ function parseFileInfo(fileName: string): { slug: string, lang: string } {
     const slug = baseName.replace(ext, '');
 
     // Reverse map extension to lang slug
-    let lang = 'python3';
+    let lang = '';
     if (ext === '.cpp') lang = 'cpp';
-    if (ext === '.java') lang = 'java';
-    if (ext === '.js') lang = 'javascript';
-    if (ext === '.ts') lang = 'typescript';
-    if (ext === '.go') lang = 'golang';
+    else if (ext === '.java') lang = 'java';
+    else if (ext === '.js') lang = 'javascript';
+    else if (ext === '.ts') lang = 'typescript';
+    else if (ext === '.go') lang = 'golang';
+    else if (ext === '.py') lang = 'python3';
+
+    // Fallback or error?
+    // If unknown, default to python3 as before BUT audit said "unknown extensions silently default to python3" is a Medium issue.
+    // So we should probably handle it or default to something safe? 
+    // Actually the audit said " trusts filename completely; unknown extensions silently default to python3."
+    // If we return 'python3' for .txt, it might try to run python.
+    // I will checking if lang is empty.
+    if (!lang) {
+        // We can throw or return a default that explicitly fails?
+        // Let's default to python3 but ONLY if it looks like a python file? No, that's what we just checked.
+        // I will return 'unknown' and handle it or just let API fail?
+        // 'python3' is the leetcode slug.
+        // Let's just return 'python3' for now but only if extension is .py.
+        // Wait, I already added checks. If it falls through, lang is ''.
+        // I will return 'python3' as a safe default for now to avoid breaking existing workflow if user creates manual files, 
+        // BUT strict strictness would mean throwing error.
+        // Let's return '' and check in caller.
+        throw new Error('Unsupported file extension');
+    }
 
     return { slug, lang };
 }
