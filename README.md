@@ -1,15 +1,27 @@
 # LeetHelp
 
-Solve LeetCode problems directly in VS Code. No browser switching.
+**LeetHelp** is a VS Code extension that allows you to solve LeetCode problems directly within your editor. Browse problems, run tests, and submit solutions without leaving VS Code.
 
-## Quick Start
+## Features
 
-### 1. Login
+- **Problem Browser**: View and search all LeetCode problems.
+- **CodeLens Integration**: "Run Test" and "Submit" buttons directly in your code files.
+- **Test & Submit**: Run custom test cases and submit your solutions to LeetCode.
+- **Multi-language Support**: Supports Python, C++, Java, JavaScript, TypeScript, Go, and more.
 
-LeetHelp uses your browser's session cookie to authenticate.
+## Installation
+
+1. Install the extension from the VS Code Marketplace (coming soon) or build from source.
+2. Open the "LeetCode" view in the Activity Bar.
+
+## Authentication (Login)
+
+LeetCode does not provide a public API for authentication, so **LeetHelp** uses your browser's session cookie to authenticate.
+
+### How to Login
 
 1. Open [leetcode.com](https://leetcode.com) and sign in
-2. Open DevTools → Network tab → click any request
+2. Open DevTools → Network tab → click any request(like GraphQL)
 3. Copy the full `Cookie` header value
 4. In VS Code: `Cmd+Shift+P` → **LeetHelp: Sign In** → paste
 
@@ -43,13 +55,18 @@ LeetHelp uses your browser's session cookie to authenticate.
 ## Build from Source
 
 ```bash
+# Clone the repository
 git clone https://github.com/sidkm18/LeetHelper.git
 cd LeetHelper
+
+# Install dependencies
 npm install
+
+# Compile
 npm run compile
 # Press F5 in VS Code to run
 ```
 
 ---
 
-Built by [Sidharth](https://github.com/sidkm18)
+Created with ❤️ by [Sidharth](https://github.com/sidkm18)
