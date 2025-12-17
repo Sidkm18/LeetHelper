@@ -37,6 +37,21 @@ export interface UserProfile {
     avatar: string;
 }
 
+export interface DailyQuestion {
+    date: string;
+    link: string;
+    question: Question;
+}
+
+export interface SubmissionHistory {
+    id: number;
+    title: string;
+    titleSlug: string;
+    lang: string;
+    status: 'AC' | 'WA' | 'TLE' | 'MLE' | 'RE';
+    timestamp: string;
+}
+
 export class LeetCodeApi {
     private static instance: LeetCodeApi;
     private readonly graphqlUrl = 'https://leetcode.com/graphql';
@@ -44,6 +59,8 @@ export class LeetCodeApi {
     private secretStorage: vscode.SecretStorage | undefined;
     private _cookie: string = '';
     private readonly SECRET_KEY = 'leethelp.sessionCookie';
+    private readonly LAST_VERIFIED_KEY = 'leethelp.lastVerifiedAt';
+    private _lastVerifiedAt: number = 0;
 
     private constructor() {
         this.outputChannel = vscode.window.createOutputChannel('LeetCode Output');
@@ -59,6 +76,8 @@ export class LeetCodeApi {
     public async initialize(secretStorage: vscode.SecretStorage): Promise<void> {
         this.secretStorage = secretStorage;
         this._cookie = await this.secretStorage.get(this.SECRET_KEY) || '';
+        const lastVerified = await this.secretStorage.get(this.LAST_VERIFIED_KEY);
+        this._lastVerifiedAt = lastVerified ? parseInt(lastVerified, 10) : 0;
 
         // Listen for changes (e.g. from other windows or concurrent updates)
         this.secretStorage.onDidChange(e => {
@@ -355,6 +374,89 @@ export class LeetCodeApi {
             if (error.response) {
                 this.log(`Status: ${error.response.status}`);
             }
+            throw error;
+        }
+    }
+
+    // ==================== Auth Health Check ====================
+
+    public async verifyAuth(): Promise<{ valid: boolean; username?: string; error?: string }> {
+        if (!this.isLoggedIn()) {
+            return { valid: false, error: 'No session cookie stored' };
+        }
+
+        try {
+            const user = await this.getUser();
+            if (user && user.username) {
+                await this.updateLastVerified();
+                return { valid: true, username: user.username };
+            }
+            return { valid: false, error: 'Session expired or invalid' };
+        } catch (error: any) {
+            return { valid: false, error: error.message || 'Auth verification failed' };
+        }
+    }
+
+    private async updateLastVerified(): Promise<void> {
+        this._lastVerifiedAt = Date.now();
+        if (this.secretStorage) {
+            await this.secretStorage.store(this.LAST_VERIFIED_KEY, this._lastVerifiedAt.toString());
+        }
+    }
+
+    public getLastVerifiedAt(): number {
+        return this._lastVerifiedAt;
+    }
+
+    public getSessionAge(): { days: number; hours: number } | null {
+        if (!this._lastVerifiedAt) return null;
+        const elapsed = Date.now() - this._lastVerifiedAt;
+        const days = Math.floor(elapsed / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((elapsed % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        return { days, hours };
+    }
+
+    public isSessionPossiblyExpired(): boolean {
+        const age = this.getSessionAge();
+        if (!age) return true; // Never verified
+        return age.days >= 7; // Warn after 7 days
+    }
+
+    // ==================== Daily Question ====================
+
+    public async getDailyQuestion(): Promise<DailyQuestion> {
+        const query = `
+            query questionOfToday {
+                activeDailyCodingChallengeQuestion {
+                    date
+                    link
+                    question {
+                        questionId
+                        title
+                        titleSlug
+                        difficulty
+                        isPaidOnly
+                        status
+                    }
+                }
+            }
+        `;
+
+        try {
+            const response = await axios.post(
+                this.graphqlUrl,
+                { query },
+                { headers: this.getHeaders(), ...axiosConfig }
+            );
+
+            if (response.data.errors) {
+                this.log('GraphQL error in getDailyQuestion');
+                throw new Error('Failed to fetch daily question');
+            }
+
+            return response.data.data.activeDailyCodingChallengeQuestion;
+        } catch (error: any) {
+            this.log(`Error fetching daily question: ${error.message}`);
             throw error;
         }
     }

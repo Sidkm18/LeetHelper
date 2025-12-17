@@ -21,32 +21,39 @@
         "commands": [
             {
                 "command": "leethelp.signIn",
-                "title": "LeetCode: Sign In"
+                "title": "LeetHelp: Sign In"
             },
             {
                 "command": "leethelp.signOut",
-                "title": "LeetCode: Sign Out"
+                "title": "LeetHelp: Sign Out"
+            },
+            {
+                "command": "leethelp.authStatus",
+                "title": "LeetHelp: Auth Status"
+            },
+            {
+                "command": "leethelp.dailyQuestion",
+                "title": "LeetHelp: Open Daily Question",
+                "icon": "$(calendar)"
             },
             {
                 "command": "leethelp.runTest",
-                "title": "LeetCode: Run Test",
+                "title": "LeetHelp: Run Test",
                 "icon": "$(play)"
             },
             {
                 "command": "leethelp.submit",
-                "title": "LeetCode: Submit",
+                "title": "LeetHelp: Submit",
                 "icon": "$(cloud-upload)"
             },
             {
                 "command": "leethelp.searchProblem",
-                "title": "Search Problem",
-                "category": "LeetHelp",
+                "title": "LeetHelp: Search Problem",
                 "icon": "$(search)"
             },
             {
                 "command": "leethelp.refresh",
-                "title": "Refresh Problems",
-                "category": "LeetHelp",
+                "title": "LeetHelp: Refresh Problems",
                 "icon": "$(refresh)"
             }
         ],
@@ -63,14 +70,19 @@
             ],
             "view/title": [
                 {
+                    "command": "leethelp.dailyQuestion",
+                    "when": "view == leetcode-problems",
+                    "group": "navigation@1"
+                },
+                {
                     "command": "leethelp.searchProblem",
                     "when": "view == leetcode-problems",
-                    "group": "navigation"
+                    "group": "navigation@2"
                 },
                 {
                     "command": "leethelp.refresh",
                     "when": "view == leetcode-problems",
-                    "group": "navigation"
+                    "group": "navigation@3"
                 }
             ]
         },

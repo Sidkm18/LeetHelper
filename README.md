@@ -1,81 +1,55 @@
 # LeetHelp
 
-**LeetHelp** is a VS Code extension that allows you to solve LeetCode problems directly within your editor. Browse problems, run tests, and submit solutions without leaving VS Code.
+Solve LeetCode problems directly in VS Code. No browser switching.
 
-## Features
+## Quick Start
 
-- **Problem Browser**: View and search all LeetCode problems.
-- **CodeLens Integration**: "Run Test" and "Submit" buttons directly in your code files.
-- **Test & Submit**: Run custom test cases and submit your solutions to LeetCode.
-- **Multi-language Support**: Supports Python, C++, Java, JavaScript, TypeScript, Go, and more.
+### 1. Login
 
-## Installation
+LeetHelp uses your browser's session cookie to authenticate.
 
-1. Install the extension from the VS Code Marketplace (coming soon) or build from source.
-2. Open the "LeetCode" view in the Activity Bar.
+1. Open [leetcode.com](https://leetcode.com) and sign in
+2. Open DevTools → Network tab → click any request
+3. Copy the full `Cookie` header value
+4. In VS Code: `Cmd+Shift+P` → **LeetHelp: Sign In** → paste
 
-## Authentication (Login)
+> Your cookie is stored securely in your OS keychain (never in plain text).
 
-LeetCode does not provide a public API for authentication, so **LeetHelp** uses your browser's session cookie to authenticate.
+### 2. Solve
 
-### How to Login
+- **Daily Question**: Click 📅 in the LeetCode sidebar (or `LeetHelp: Open Daily Question`)
+- **Search**: Click 🔍 or `LeetHelp: Search Problem`
+- **Test**: Click **Run Test** CodeLens above your code
+- **Submit**: Click **Submit** CodeLens
 
-1. Open [LeetCode](https://leetcode.com) in your browser (Chrome) and sign in.
-2. Open Developer Tools (Right-click -> Inspect, or F12).
-3. Go to the **Network** tab.
-4. Click on any request to `leetcode.com` (e.g., `graphql` or `all`).
-5. In the **Request Headers** section, find the `Cookie` header.
-6. Copy the entire value of the `Cookie` header.
-   - *Note: It should look like `csrftoken=...; LEETCODE_SESSION=...; ...`*
-7. In VS Code, open the Command Palette (`Cmd+Shift+P` or `Ctrl+Shift+P`).
-8. Run the command: **LeetHelp: Sign In**.
-9. Paste the copied cookie string into the input box and press Enter.
+### 3. Auto-Features
 
-> **Security Note**: Your cookie is stored securely using VS Code's native **SecretStorage** API, which encrypts data using your operating system's keychain (e.g., macOS Keychain, Windows Credential Manager). It is **not** stored in plain text in your settings files.
+- **Git auto-commit**: Accepted solutions are automatically committed as `LC: 238. Product of Array Except Self [Java]`
+- **Local history**: All submissions saved to `leethelp-history.json`
+- **Auth health check**: Warns you when session expires
 
-## Security
+## Commands
 
-We take your security seriously:
-- **Encrypted Storage**: Your LeetCode cookie is **encrypted** using your operating system's built-in password manager (macOS Keychain, Windows Credential Manager, or Linux Secret Service). It is **never** saved in plain text.
-- **Secure Connections**: All communication with LeetCode uses **HTTPS** encryption.
-- **XSS Protection**: Problem descriptions are sanitized to prevent malicious code injection.
-- **Input Validation**: All data is validated before being used to prevent injection attacks.
+| Command | Description |
+|---------|-------------|
+| `LeetHelp: Sign In` | Authenticate with cookie |
+| `LeetHelp: Sign Out` | Clear session |
+| `LeetHelp: Auth Status` | Check login status |
+| `LeetHelp: Open Daily Question` | Today's problem |
+| `LeetHelp: Search Problem` | Find any problem |
+| `LeetHelp: Run Test` | Test with examples |
+| `LeetHelp: Submit` | Submit to LeetCode |
 
-## Usage
-
-1. **Search**: Click the search icon in the LeetHelp view or run **LeetHelp: Search Problem**.
-2. **Open**: Select a problem to open its description and create a code file.
-3. **Code**: Write your solution in the generated file.
-4. **Test**: Click **Run Test** or run **LeetHelp: Run Test** to verify your solution with example cases.
-5. **Submit**: Click **Submit** or run **LeetHelp: Submit** to submit to LeetCode.
-
-## Building from Source
+## Build from Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/sidkm18/LeetHelper.git
 cd LeetHelper
-
-# Install dependencies
 npm install
-
-# Compile
 npm run compile
-
-# Package (optional)
-npx vsce package
+# Press F5 in VS Code to run
 ```
-
-## Dependencies
-
-### Runtime
-- **axios**: HTTP client for LeetCode API requests
-- **isomorphic-dompurify**: HTML sanitization for security
-
-### Development
-- **typescript**: TypeScript compiler
-- **@types/vscode**: VS Code API type definitions
 
 ---
 
-Created with ❤️ by [Sidharth](https://github.com/sidkm18)
+Built by [Sidharth](https://github.com/sidkm18)

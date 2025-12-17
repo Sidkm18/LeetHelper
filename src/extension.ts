@@ -1,14 +1,86 @@
 import * as vscode from 'vscode';
 import { LeetCodeTreeProvider } from './treeProvider';
-import { LeetCodeApi, Question } from './leetcodeApi';
+import { LeetCodeApi, Question, QuestionDetail, SubmissionHistory } from './leetcodeApi';
 import { LeetCodeWebview } from './webviewPanel';
 import * as path from 'path';
 import * as fs from 'fs';
+import { execSync } from 'child_process';
 import { LeetCodeCodeLensProvider } from './codelensProvider';
 
-export async function activate(context: vscode.ExtensionContext) {
-    // Hello World command removed
+// ==================== Local History ====================
+const HISTORY_FILE = 'leethelp-history.json';
 
+function getHistoryPath(): string | null {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) return null;
+    return path.join(workspaceFolders[0].uri.fsPath, HISTORY_FILE);
+}
+
+function loadHistory(): SubmissionHistory[] {
+    const historyPath = getHistoryPath();
+    if (!historyPath || !fs.existsSync(historyPath)) return [];
+    try {
+        return JSON.parse(fs.readFileSync(historyPath, 'utf8'));
+    } catch {
+        return [];
+    }
+}
+
+function saveHistory(history: SubmissionHistory[]): void {
+    const historyPath = getHistoryPath();
+    if (!historyPath) return;
+    fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
+}
+
+function addToHistory(entry: SubmissionHistory): void {
+    const history = loadHistory();
+    history.unshift(entry); // Add to beginning
+    // Keep last 500 entries
+    if (history.length > 500) history.pop();
+    saveHistory(history);
+}
+
+// ==================== Git Auto-Commit ====================
+async function autoCommitOnAccepted(
+    document: vscode.TextDocument,
+    problem: QuestionDetail,
+    lang: string
+): Promise<void> {
+    const filePath = document.uri.fsPath;
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+    
+    if (!workspaceFolder) return;
+    
+    const cwd = workspaceFolder.uri.fsPath;
+    
+    // Save the file first
+    await document.save();
+    
+    // Check if we're in a git repo
+    try {
+        execSync('git rev-parse --git-dir', { cwd, stdio: 'ignore' });
+    } catch {
+        return; // Not a git repo, skip silently
+    }
+    
+    // Format language for display
+    const langDisplay = lang.charAt(0).toUpperCase() + lang.slice(1).replace('3', '');
+    const commitMsg = `LC: ${problem.questionId}. ${problem.title} [${langDisplay}]`;
+    
+    try {
+        execSync(`git add "${filePath}"`, { cwd, stdio: 'ignore' });
+        execSync(`git commit -m "${commitMsg}"`, { cwd, stdio: 'ignore' });
+        vscode.window.showInformationMessage(`✅ Committed: ${commitMsg}`);
+    } catch (err: any) {
+        // Commit might fail if nothing changed - that's OK
+        const api = LeetCodeApi.getInstance();
+        if (err.message && !err.message.includes('nothing to commit')) {
+            api.log(`Git commit failed: ${err.message}`);
+        }
+    }
+}
+
+export async function activate(context: vscode.ExtensionContext) {
     // Initialize API with SecretStorage
     const api = LeetCodeApi.getInstance();
     await api.initialize(context.secrets);
@@ -20,6 +92,38 @@ export async function activate(context: vscode.ExtensionContext) {
         await api.setCookie(legacyCookie);
         await config.update('sessionCookie', undefined, true); // Remove from settings
         vscode.window.showInformationMessage('LeetCode session migrated to secure storage.');
+    }
+
+    // ==================== Auth Health Check on Startup ====================
+    if (api.isLoggedIn()) {
+        // Check if session might be expired
+        if (api.isSessionPossiblyExpired()) {
+            vscode.window.showWarningMessage(
+                '⚠️ LeetHelp: Session may be expired. Re-auth recommended.',
+                'Sign In', 'Check Status'
+            ).then(selection => {
+                if (selection === 'Sign In') {
+                    vscode.commands.executeCommand('leethelp.signIn');
+                } else if (selection === 'Check Status') {
+                    vscode.commands.executeCommand('leethelp.authStatus');
+                }
+            });
+        } else {
+            // Verify auth silently
+            api.verifyAuth().then(result => {
+                if (!result.valid) {
+                    vscode.window.showErrorMessage(
+                        `LeetHelp: Session invalid - ${result.error}`,
+                        'Sign In'
+                    ).then(selection => {
+                        if (selection === 'Sign In') {
+                            vscode.commands.executeCommand('leethelp.signIn');
+                        }
+                    });
+                    api.deleteCookie(); // Auto-clear invalid cookie
+                }
+            });
+        }
     }
 
     // Tree View Provider
@@ -121,6 +225,74 @@ export async function activate(context: vscode.ExtensionContext) {
         await api.deleteCookie();
         vscode.window.showInformationMessage('Successfully signed out.');
         treeProvider.refresh();
+    }));
+
+    // ==================== Auth Status Command ====================
+    context.subscriptions.push(vscode.commands.registerCommand('leethelp.authStatus', async () => {
+        if (!api.isLoggedIn()) {
+            vscode.window.showWarningMessage('LeetHelp: Not signed in.', 'Sign In').then(selection => {
+                if (selection === 'Sign In') {
+                    vscode.commands.executeCommand('leethelp.signIn');
+                }
+            });
+            return;
+        }
+
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Checking auth status...',
+            cancellable: false
+        }, async () => {
+            const result = await api.verifyAuth();
+            const sessionAge = api.getSessionAge();
+            
+            if (result.valid) {
+                let ageStr = 'Never verified';
+                if (sessionAge) {
+                    if (sessionAge.days > 0) {
+                        ageStr = `${sessionAge.days}d ${sessionAge.hours}h ago`;
+                    } else {
+                        ageStr = `${sessionAge.hours}h ago`;
+                    }
+                }
+                
+                vscode.window.showInformationMessage(
+                    `✅ LeetHelp Auth Status\n` +
+                    `User: ${result.username}\n` +
+                    `Last verified: ${ageStr}\n` +
+                    `Status: Valid`
+                );
+            } else {
+                vscode.window.showErrorMessage(
+                    `❌ LeetHelp: Auth invalid - ${result.error}`,
+                    'Sign In'
+                ).then(selection => {
+                    if (selection === 'Sign In') {
+                        vscode.commands.executeCommand('leethelp.signIn');
+                    }
+                });
+            }
+        });
+    }));
+
+    // ==================== Daily Question Command ====================
+    context.subscriptions.push(vscode.commands.registerCommand('leethelp.dailyQuestion', async () => {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Fetching daily question...',
+            cancellable: false
+        }, async () => {
+            try {
+                const daily = await api.getDailyQuestion();
+                const question: Question = daily.question;
+                
+                // Open it like any other problem
+                vscode.commands.executeCommand('leethelp.openProblem', question);
+            } catch (error: any) {
+                api.log(`Error fetching daily question: ${error.message}`);
+                vscode.window.showErrorMessage('Failed to fetch daily question. Check Output panel.');
+            }
+        });
     }));
 
     // Open Problem Command
@@ -353,6 +525,19 @@ export async function activate(context: vscode.ExtensionContext) {
                             if (result.status_memory) {
                                 outputChannel.appendLine(`Memory:  ${result.status_memory}`);
                             }
+                            
+                            // ==================== Git Auto-Commit on AC ====================
+                            await autoCommitOnAccepted(editor.document, detail, lang);
+                            
+                            // ==================== Local History ====================
+                            addToHistory({
+                                id: parseInt(detail.questionId, 10),
+                                title: detail.title,
+                                titleSlug: detail.titleSlug,
+                                lang: lang,
+                                status: 'AC',
+                                timestamp: new Date().toISOString()
+                            });
                         }
 
                         // Check if runtime_percentile exists and is a number
