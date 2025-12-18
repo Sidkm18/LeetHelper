@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { LeetCodeApi, QuestionDetail } from './leetcodeApi';
+import { QuestionDetail } from './leetcodeApi';
 import DOMPurify from 'isomorphic-dompurify';
 
 // Allowlist for difficulty values to prevent CSS class injection
@@ -138,7 +138,7 @@ export class LeetCodeWebview {
                 <span class="difficulty ${getSafeDifficulty(question.difficulty)}">${DOMPurify.sanitize(question.difficulty, { ALLOWED_TAGS: [] })}</span>
             </div>
             <hr/>
-            <div class="content">${DOMPurify.sanitize(question.content)}</div>
+            <div class="content">${question.content}</div>
         </body>
         </html>`;
     }

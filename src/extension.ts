@@ -101,6 +101,76 @@ function getOutputChannel(): vscode.OutputChannel {
     return outputChannel;
 }
 
+// ==================== Verify Cookie Command ====================
+async function verifyCookieCommand(): Promise<void> {
+    const api = LeetCodeApi.getInstance();
+    if (!api.isLoggedIn()) {
+        vscode.window.showWarningMessage('Not signed in. Please sign in first.');
+        return;
+    }
+
+    const logOutput = vscode.window.createOutputChannel('LeetCode Cookie Verification');
+    logOutput.clear();
+    logOutput.show();
+
+    logOutput.appendLine('Checking stored cookie...');
+    const result = await api.verifyAuth();
+    
+    if (result.valid) {
+        logOutput.appendLine(`✅ Auth valid. Signed in as: ${result.username}`);
+        logOutput.appendLine('');
+        logOutput.appendLine('If you still see Cloudflare 403 errors:');
+        logOutput.appendLine('1. Open https://leetcode.com in your browser.');
+        logOutput.appendLine('2. Wait for it to fully load (Cloudflare challenge completes).');
+        logOutput.appendLine('3. Open DevTools → Network → click any request → Headers → copy full Cookie value.');
+        logOutput.appendLine('4. Run LeetHelp: Sign In and paste the cookie.');
+        logOutput.appendLine('5. Make sure the cookie contains cf_clearance, LEETCODE_SESSION, and csrftoken.');
+    } else {
+        logOutput.appendLine(`❌ Auth invalid: ${result.error}`);
+        logOutput.appendLine('Please sign in again and make sure to copy the full Cookie from your browser.');
+    }
+}
+
+// ==================== Code Sanitization ====================
+function sanitizeCode(raw: string): { code: string; modified: boolean } {
+    let code = raw;
+    let modified = false;
+
+    const before = code;
+    // Normalize newlines
+    code = code.replace(/\r\n?/g, '\n');
+    // Remove BOM
+    code = code.replace(/^\uFEFF/, '');
+    // Remove zero-width and format control characters
+    code = code.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '');
+    // Replace NBSP with normal space
+    code = code.replace(/\u00A0/g, ' ');
+    // Unicode normalize
+    try {
+        code = code.normalize('NFC');
+    } catch {
+        // ignore if environment lacks normalize
+    }
+    modified = code !== before;
+    return { code, modified };
+}
+
+function likelyNeedsLcWrapper(lang: string, code: string): boolean {
+    // Heuristics for common LC wrappers
+    if (lang === 'java' || lang === 'cpp' || lang === 'typescript' || lang === 'javascript') {
+        return !/\bclass\s+Solution\b/.test(code);
+    }
+    if (lang === 'python3' || lang === 'python') {
+        // Either class Solution: or def within class
+        return !(/\bclass\s+Solution\b/.test(code));
+    }
+    if (lang === 'golang') {
+        // Go uses functions, but often expects method receivers; skip strict checks
+        return false;
+    }
+    return false;
+}
+
 export async function activate(context: vscode.ExtensionContext) {
     // Initialize API with SecretStorage
     const api = LeetCodeApi.getInstance();
@@ -318,6 +388,11 @@ export async function activate(context: vscode.ExtensionContext) {
         });
     }));
 
+    // Verify Cookie Command
+    context.subscriptions.push(vscode.commands.registerCommand('leethelp.verifyCookie', async () => {
+        await verifyCookieCommand();
+    }));
+
     // ==================== Daily Question Command ====================
     context.subscriptions.push(vscode.commands.registerCommand('leethelp.dailyQuestion', async () => {
         await vscode.window.withProgress({
@@ -437,7 +512,20 @@ export async function activate(context: vscode.ExtensionContext) {
                 title: 'Running Code...',
                 cancellable: false
             }, async (progress) => {
-                const code = editor.document.getText();
+                // Prepare code: sanitize hidden characters/normalize
+                const rawCode = editor.document.getText();
+                const { code: codeSanitized, modified } = sanitizeCode(rawCode);
+                if (modified) {
+                    showTimedMessage('Cleaned hidden characters in code before running.', 'info', 5000);
+                }
+                // Warn if code likely missing LeetCode wrapper (non-blocking)
+                if (likelyNeedsLcWrapper(lang, codeSanitized)) {
+                    vscode.window.showWarningMessage(
+                        'Your code may be missing the LeetCode wrapper (e.g., class Solution). Tests may fail to compile.',
+                        'Run Anyway'
+                    );
+                }
+                const code = codeSanitized;
                 const dataInput = detail.exampleTestcases;
 
                 const interpretId = await api.runCode(slug, detail.questionId, lang, code, dataInput);
@@ -600,7 +688,20 @@ export async function activate(context: vscode.ExtensionContext) {
                 title: 'Running Custom Test...',
                 cancellable: false
             }, async (progress) => {
-                const code = editor.document.getText();
+                // Prepare code: sanitize hidden characters/normalize
+                const rawCode = editor.document.getText();
+                const { code: codeSanitized, modified } = sanitizeCode(rawCode);
+                if (modified) {
+                    showTimedMessage('Cleaned hidden characters in code before running.', 'info', 5000);
+                }
+                // Warn if code likely missing LeetCode wrapper (non-blocking)
+                if (likelyNeedsLcWrapper(lang, codeSanitized)) {
+                    vscode.window.showWarningMessage(
+                        'Your code may be missing the LeetCode wrapper (e.g., class Solution). Tests may fail to compile.',
+                        'Run Anyway'
+                    );
+                }
+                const code = codeSanitized;
                 const interpretId = await api.runCode(slug, detail.questionId, lang, code, dataInput);
 
                 // Poll for result
@@ -738,7 +839,24 @@ export async function activate(context: vscode.ExtensionContext) {
                 title: 'Submitting Code...',
                 cancellable: false
             }, async (progress) => {
-                const code = editor.document.getText();
+                // Prepare code: sanitize hidden characters/normalize
+                const rawCode = editor.document.getText();
+                const { code: codeSanitized, modified } = sanitizeCode(rawCode);
+                if (modified) {
+                    showTimedMessage('Cleaned hidden characters in code before submitting.', 'info', 5000);
+                }
+                if (likelyNeedsLcWrapper(lang, codeSanitized)) {
+                    const choice = await vscode.window.showWarningMessage(
+                        'Your code may be missing the LeetCode wrapper (e.g., class Solution). This often causes submission compile errors.',
+                        { modal: false },
+                        'Submit Anyway',
+                        'Cancel'
+                    );
+                    if (choice === 'Cancel') {
+                        return;
+                    }
+                }
+                const code = codeSanitized;
                 const submissionId = await api.submit(slug, detail.questionId, lang, code);
 
                 let result: any = { state: 'STARTED' };

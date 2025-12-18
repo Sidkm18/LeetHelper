@@ -8,6 +8,12 @@ const axiosConfig = {
     maxBodyLength: 10 * 1024 * 1024 // 10MB max request
 };
 
+// Helper function to add random delay (more human-like)
+async function randomDelay(min: number = 500, max: number = 1500): Promise<void> {
+    const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+    await new Promise(resolve => setTimeout(resolve, delay));
+}
+
 export interface Question {
     questionId: string;
     title: string;
@@ -125,11 +131,22 @@ export class LeetCodeApi {
         const cookie = this._cookie;
         const csrfToken = this.getCsrfToken(cookie);
 
+        // Headers that mimic a real browser to help with Cloudflare
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
             'Referer': referer,
-            'Origin': 'https://leetcode.com'
+            'Origin': 'https://leetcode.com',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"macOS"',
+            'Priority': 'u=1, i'
         };
 
         if (cookie && cookie.trim() !== '') {
@@ -179,12 +196,37 @@ export class LeetCodeApi {
         return message.replace(/https?:\/\/[^\s]+/g, '[URL REDACTED]');
     }
 
+    private isCloudflareChallenge(data: any): boolean {
+        if (!data) return false;
+        const text = typeof data === 'string' ? data : JSON.stringify(data);
+        return /Just a moment\.{3}/i.test(text) || /_cf_chl_opt/i.test(text) || /challenge-platform\/h\/g/i.test(text);
+    }
+
+    private hasCfClearance(cookie: string): boolean {
+        return /cf_clearance=/i.test(cookie);
+    }
+
+    private logCookieDiagnostics(): void {
+        const cookie = this._cookie;
+        if (!cookie) {
+            this.log('[WARN] No session cookie stored');
+            return;
+        }
+        const hasCf = this.hasCfClearance(cookie);
+        const hasLc = /LEETCODE_SESSION=/i.test(cookie);
+        const hasCsrf = /csrftoken=/i.test(cookie);
+        this.log(`[DIAG] Cookie tokens: cf_clearance=${hasCf}, LEETCODE_SESSION=${hasLc}, csrftoken=${hasCsrf}`);
+        if (!hasCf) {
+            this.log('[WARN] cf_clearance missing: Cloudflare may block requests. Re-copy Cookie from browser.');
+        }
+    }
+
     private getErrorMessage(error: any): string {
         // Parse error and return human-readable message
         if (error.response) {
             const status = error.response.status;
             const data = error.response.data;
-            
+
             // Authentication errors
             if (status === 401) {
                 return 'Authentication failed: Session expired or invalid. Please sign in again.';
@@ -193,9 +235,16 @@ export class LeetCodeApi {
                 if (data && typeof data === 'string' && data.includes('CSRF')) {
                     return 'CSRF token error: Please sign out and sign in again.';
                 }
+                if (this.isCloudflareChallenge(data)) {
+                    const hasCf = this.hasCfClearance(this._cookie);
+                    if (!hasCf) {
+                        return 'Blocked by Cloudflare: Your Cookie is missing cf_clearance. Re-copy the full Cookie header from your browser on any LeetCode page, then sign in again.';
+                    }
+                    return 'Blocked by Cloudflare: cf_clearance exists but is invalid/expired. Re-copy your Cookie from the browser and sign in again.';
+                }
                 return 'Access forbidden: Session may be expired or invalid.';
             }
-            
+
             // Bad request - usually malformed code or encoding issues
             if (status === 400) {
                 if (data && data.error) {
@@ -203,25 +252,25 @@ export class LeetCodeApi {
                 }
                 return 'Bad request: Code may contain invalid characters or encoding issues. Try re-typing the code.';
             }
-            
+
             // Rate limiting
             if (status === 429) {
                 return 'Rate limit exceeded: Please wait a moment before trying again.';
             }
-            
+
             // Server errors
             if (status >= 500) {
                 return 'LeetCode server error: Please try again later.';
             }
-            
+
             // Generic error with data
             if (data && data.error) {
                 return `Error: ${data.error}`;
             }
-            
+
             return `HTTP ${status}: ${error.message}`;
         }
-        
+
         // Network errors
         if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
             return 'Request timeout: Please check your internet connection.';
@@ -229,9 +278,46 @@ export class LeetCodeApi {
         if (error.code === 'ENOTFOUND' || error.message.includes('Network Error')) {
             return 'Network error: Cannot reach LeetCode. Please check your internet connection.';
         }
-        
+
         // Generic error
         return error.message || 'Unknown error occurred';
+    }
+
+    private async makeRequest<T>(
+        url: string, 
+        data: any, 
+        headers: Record<string, string>,
+        retries: number = 2
+    ): Promise<T> {
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                if (attempt > 0) {
+                    // Add delay before retry to avoid looking like a bot
+                    await randomDelay(1000, 2000);
+                    this.log(`[RETRY] Attempt ${attempt + 1}/${retries + 1}`);
+                }
+                
+                const response = await axios.post(url, data, { 
+                    headers, 
+                    ...axiosConfig,
+                    // Disable automatic decompression to match real browsers better
+                    decompress: true,
+                });
+                
+                return response.data as T;
+            } catch (error: any) {
+                // If it's the last retry or not a Cloudflare issue, throw
+                const is403 = error.response?.status === 403;
+                const isCloudflare = is403 && this.isCloudflareChallenge(error.response?.data);
+                
+                if (attempt === retries || !isCloudflare) {
+                    throw error;
+                }
+                
+                this.log(`[WARN] Cloudflare challenge detected, retrying...`);
+            }
+        }
+        throw new Error('Max retries exceeded');
     }
 
     public async getUser(): Promise<UserProfile | null> {
@@ -247,25 +333,25 @@ export class LeetCodeApi {
         `;
 
         try {
-            const response = await axios.post(
+            const data = await this.makeRequest<any>(
                 this.graphqlUrl,
                 { query },
-                { headers: this.getHeaders(), ...axiosConfig }
+                this.getHeaders()
             );
 
-            if (response.data.errors) {
+            if (data.errors) {
                 // Redact sensitive info
                 this.log('Auth Check Failed');
                 return null;
             }
 
-            const user = response.data.data.userStatus;
+            const user = data.data.userStatus;
             if (user && user.username) {
                 return user;
             }
             return null;
         } catch (error: any) {
-            this.log(`Auth Check Error: ${error.message}`);
+            this.log(`Auth Check Error: ${this.getErrorMessage(error)}`);
             return null;
         }
     }
@@ -378,6 +464,21 @@ export class LeetCodeApi {
         const url = `https://leetcode.com/problems/${slug}/interpret_solution/`;
 
         try {
+            this.logCookieDiagnostics();
+            
+            // Normalize code to match LeetCode formatter and prevent Cloudflare blocks
+            const normalizedCode = code
+                .replace(/\r\n/g, '\n')  // Normalize line endings
+                .replace(/[""]/g, '"')   // Replace smart quotes
+                .replace(/['']/g, "'")   // Replace smart apostrophes
+                .replace(/\u00A0/g, ' ') // Replace non-breaking spaces
+                .replace(/\t/g, '    ')  // Convert tabs to 4 spaces
+                .split('\n')
+                .map(line => line.trimEnd())  // Trim trailing whitespace
+                .join('\n')
+                .replace(/\n{3,}/g, '\n\n')  // Max 2 consecutive newlines
+                .trim() + '\n';  // Ensure ends with single newline
+            
             const response = await axios.post(
                 url,
                 {
@@ -385,7 +486,7 @@ export class LeetCodeApi {
                     data_input: dataInput,
                     lang: lang,
                     judge_type: 'large',
-                    typed_code: code
+                    typed_code: normalizedCode
                 },
                 { headers: this.getHeaders(`https://leetcode.com/problems/${slug}/`), ...axiosConfig }
             );
@@ -426,12 +527,27 @@ export class LeetCodeApi {
         const url = `https://leetcode.com/problems/${slug}/submit/`;
 
         try {
+            this.logCookieDiagnostics();
+            
+            // Normalize code to match LeetCode formatter and prevent Cloudflare blocks
+            const normalizedCode = code
+                .replace(/\r\n/g, '\n')  // Normalize line endings
+                .replace(/[""]/g, '"')   // Replace smart quotes
+                .replace(/['']/g, "'")   // Replace smart apostrophes
+                .replace(/\u00A0/g, ' ') // Replace non-breaking spaces
+                .replace(/\t/g, '    ')  // Convert tabs to 4 spaces
+                .split('\n')
+                .map(line => line.trimEnd())  // Trim trailing whitespace
+                .join('\n')
+                .replace(/\n{3,}/g, '\n\n')  // Max 2 consecutive newlines
+                .trim() + '\n';  // Ensure ends with single newline
+            
             const response = await axios.post(
                 url,
                 {
                     question_id: questionId,
                     lang: lang,
-                    typed_code: code
+                    typed_code: normalizedCode
                 },
                 { headers: this.getHeaders(`https://leetcode.com/problems/${slug}/`), ...axiosConfig }
             );
