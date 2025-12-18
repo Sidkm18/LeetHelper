@@ -6,14 +6,14 @@
     "description": "Solve LeetCode problems within VS Code",
     "repository": {
         "type": "git",
-        "url": "https://github.com/leethelp/leethelp"
+        "url": "https://github.com/Sidkm18/LeetHelper.git"
     },
-    "version": "0.0.1",
+    "version": "1.0.1",
     "engines": {
         "vscode": "^1.80.0"
     },
     "categories": [
-        "Other"
+        "Education","Other"
     ],
     "activationEvents": [],
     "main": "./dist/extension.js",
@@ -21,39 +21,44 @@
         "commands": [
             {
                 "command": "leethelp.signIn",
-                "title": "LeetHelp: Sign In"
+                "title": "Leet: Sign In"
             },
             {
                 "command": "leethelp.signOut",
-                "title": "LeetHelp: Sign Out"
+                "title": "Leet: Sign Out"
             },
             {
                 "command": "leethelp.authStatus",
-                "title": "LeetHelp: Auth Status"
+                "title": "Leet: Auth Status"
             },
             {
                 "command": "leethelp.dailyQuestion",
-                "title": "LeetHelp: Open Daily Question",
+                "title": "Leet: Daily Question",
                 "icon": "$(calendar)"
             },
             {
                 "command": "leethelp.runTest",
-                "title": "LeetHelp: Run Test",
-                "icon": "$(play)"
+                "title": "Leet: Run Test",
+                "icon": "$(rocket)"
+            },
+            {
+                "command": "leethelp.runCustomTest",
+                "title": "Leet: Run Custom Test",
+                "icon": "$(beaker)"
             },
             {
                 "command": "leethelp.submit",
-                "title": "LeetHelp: Submit",
+                "title": "Leet: Submit",
                 "icon": "$(cloud-upload)"
             },
             {
                 "command": "leethelp.searchProblem",
-                "title": "LeetHelp: Search Problem",
+                "title": "Leet: Search",
                 "icon": "$(search)"
             },
             {
                 "command": "leethelp.refresh",
-                "title": "LeetHelp: Refresh Problems",
+                "title": "Leet: Refresh",
                 "icon": "$(refresh)"
             }
         ],
@@ -61,11 +66,15 @@
             "editor/title": [
                 {
                     "command": "leethelp.runTest",
-                    "group": "navigation"
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "leethelp.runCustomTest",
+                    "group": "navigation@2"
                 },
                 {
                     "command": "leethelp.submit",
-                    "group": "navigation"
+                    "group": "navigation@3"
                 }
             ],
             "view/title": [
@@ -91,7 +100,7 @@
                 {
                     "id": "leetcode-view-container",
                     "title": "LeetCode",
-                    "icon": "resources/icon.png"
+                    "icon": "resources/icon.svg"
                 }
             ]
         },
@@ -106,7 +115,27 @@
         "configuration": {
             "title": "LeetHelp",
             "properties": {}
-        }
+        },
+        "keybindings": [
+            {
+                "command": "leethelp.runTest",
+                "key": "ctrl+alt+r",
+                "mac": "cmd+alt+r",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "leethelp.runCustomTest",
+                "key": "ctrl+alt+c",
+                "mac": "cmd+alt+c",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "leethelp.submit",
+                "key": "ctrl+alt+s",
+                "mac": "cmd+alt+s",
+                "when": "editorTextFocus"
+            }
+        ]
     },
     "scripts": {
         "vscode:prepublish": "npm run package",

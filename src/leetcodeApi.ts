@@ -136,15 +136,20 @@ export class LeetCodeApi {
             headers['Cookie'] = cookie;
             if (csrfToken) {
                 headers['x-csrftoken'] = csrfToken;
+                this.log(`[DEBUG] CSRF token extracted: ${csrfToken.substring(0, 8)}...`);
+            } else {
+                this.log('[WARN] No CSRF token found in cookie - requests may fail');
             }
+        } else {
+            this.log('[WARN] No session cookie set');
         }
 
         return headers;
     }
 
     private getCsrfToken(cookie: string): string {
-        // Security: Only allow alphanumeric characters in CSRF token
-        const match = cookie.match(/csrftoken=([a-zA-Z0-9]+)/i);
+        // Extract CSRF token from cookie (can contain alphanumeric, underscores, hyphens)
+        const match = cookie.match(/csrftoken=([a-zA-Z0-9_-]+)/i);
         return match ? match[1] : '';
     }
 
@@ -172,6 +177,61 @@ export class LeetCodeApi {
     private redactUrl(message: string): string {
         // Redact URLs from error messages
         return message.replace(/https?:\/\/[^\s]+/g, '[URL REDACTED]');
+    }
+
+    private getErrorMessage(error: any): string {
+        // Parse error and return human-readable message
+        if (error.response) {
+            const status = error.response.status;
+            const data = error.response.data;
+            
+            // Authentication errors
+            if (status === 401) {
+                return 'Authentication failed: Session expired or invalid. Please sign in again.';
+            }
+            if (status === 403) {
+                if (data && typeof data === 'string' && data.includes('CSRF')) {
+                    return 'CSRF token error: Please sign out and sign in again.';
+                }
+                return 'Access forbidden: Session may be expired or invalid.';
+            }
+            
+            // Bad request - usually malformed code or encoding issues
+            if (status === 400) {
+                if (data && data.error) {
+                    return `Bad request: ${data.error}`;
+                }
+                return 'Bad request: Code may contain invalid characters or encoding issues. Try re-typing the code.';
+            }
+            
+            // Rate limiting
+            if (status === 429) {
+                return 'Rate limit exceeded: Please wait a moment before trying again.';
+            }
+            
+            // Server errors
+            if (status >= 500) {
+                return 'LeetCode server error: Please try again later.';
+            }
+            
+            // Generic error with data
+            if (data && data.error) {
+                return `Error: ${data.error}`;
+            }
+            
+            return `HTTP ${status}: ${error.message}`;
+        }
+        
+        // Network errors
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+            return 'Request timeout: Please check your internet connection.';
+        }
+        if (error.code === 'ENOTFOUND' || error.message.includes('Network Error')) {
+            return 'Network error: Cannot reach LeetCode. Please check your internet connection.';
+        }
+        
+        // Generic error
+        return error.message || 'Unknown error occurred';
     }
 
     public async getUser(): Promise<UserProfile | null> {
@@ -335,8 +395,15 @@ export class LeetCodeApi {
             this.log(`Error running code: ${this.redactUrl(error.message)}`);
             if (error.response) {
                 this.log(`Status: ${error.response.status}`);
+                if (error.response.data) {
+                    this.log(`Response: ${JSON.stringify(error.response.data)}`);
+                }
             }
-            throw error;
+            // Re-throw with enhanced error info
+            const enhancedError: any = new Error(this.getErrorMessage(error));
+            enhancedError.status = error.response?.status;
+            enhancedError.originalError = error;
+            throw enhancedError;
         }
     }
 
@@ -373,8 +440,15 @@ export class LeetCodeApi {
             this.log(`Error submitting code: ${this.redactUrl(error.message)}`);
             if (error.response) {
                 this.log(`Status: ${error.response.status}`);
+                if (error.response.data) {
+                    this.log(`Response: ${JSON.stringify(error.response.data)}`);
+                }
             }
-            throw error;
+            // Re-throw with enhanced error info
+            const enhancedError: any = new Error(this.getErrorMessage(error));
+            enhancedError.status = error.response?.status;
+            enhancedError.originalError = error;
+            throw enhancedError;
         }
     }
 

@@ -70,7 +70,7 @@ async function autoCommitOnAccepted(
     try {
         execSync(`git add "${filePath}"`, { cwd, stdio: 'ignore' });
         execSync(`git commit -m "${commitMsg}"`, { cwd, stdio: 'ignore' });
-        vscode.window.showInformationMessage(`✅ Committed: ${commitMsg}`);
+        showTimedMessage(`✅ Committed: ${commitMsg}`, 'info', 10000);
     } catch (err: any) {
         // Commit might fail if nothing changed - that's OK
         const api = LeetCodeApi.getInstance();
@@ -78,6 +78,17 @@ async function autoCommitOnAccepted(
             api.log(`Git commit failed: ${err.message}`);
         }
     }
+}
+
+// ==================== Auto-dismiss Notification ====================
+function showTimedMessage(message: string, type: 'info' | 'warning' | 'error' = 'info', timeout: number = 15000): void {
+    vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        cancellable: false
+    }, async (progress) => {
+        progress.report({ message });
+        await new Promise(resolve => setTimeout(resolve, timeout));
+    });
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -129,6 +140,39 @@ export async function activate(context: vscode.ExtensionContext) {
     // Tree View Provider
     const treeProvider = new LeetCodeTreeProvider();
     vscode.window.registerTreeDataProvider('leetcode-problems', treeProvider);
+
+    // ==================== Status Bar Item ====================
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.command = 'leethelp.authStatus';
+    context.subscriptions.push(statusBarItem);
+
+    async function updateStatusBar() {
+        // Show loading state first
+        statusBarItem.text = `$(sync~spin) LC`;
+        statusBarItem.tooltip = 'Checking auth status...';
+        statusBarItem.show();
+
+        if (api.isLoggedIn()) {
+            const result = await api.verifyAuth();
+            if (result.valid) {
+                statusBarItem.text = `$(verified-filled) ${result.username}`;
+                statusBarItem.tooltip = `LeetCode: Signed in as ${result.username}\n\nShortcuts:\n• Cmd+Alt+R - Run Test\n• Cmd+Alt+C - Custom Test\n• Cmd+Alt+S - Submit\n\nClick to check status`;
+                statusBarItem.backgroundColor = undefined;
+            } else {
+                statusBarItem.text = `$(warning) LC: Expired`;
+                statusBarItem.tooltip = 'LeetCode session expired\nClick to check status';
+                statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+            }
+        } else {
+            statusBarItem.text = `$(log-in) LeetCode`;
+            statusBarItem.tooltip = 'Click to sign in to LeetCode';
+            statusBarItem.backgroundColor = undefined;
+        }
+        statusBarItem.show();
+    }
+
+    // Initial status bar update
+    updateStatusBar();
 
     // Refresh Command
     context.subscriptions.push(vscode.commands.registerCommand('leethelp.refresh', () => treeProvider.refresh()));
@@ -210,11 +254,13 @@ export async function activate(context: vscode.ExtensionContext) {
                 const user = await api.getUser();
 
                 if (user) {
-                    vscode.window.showInformationMessage(`Successfully signed in as ${user.username}!`);
+                    showTimedMessage(`✅ Successfully signed in as ${user.username}!`);
                     treeProvider.refresh();
+                    updateStatusBar();
                 } else {
                     vscode.window.showErrorMessage('Login failed. Please check your cookie and try again.');
                     await api.deleteCookie(); // Clear invalid cookie
+                    updateStatusBar();
                 }
             });
         }
@@ -223,8 +269,9 @@ export async function activate(context: vscode.ExtensionContext) {
     // Sign Out Command
     context.subscriptions.push(vscode.commands.registerCommand('leethelp.signOut', async () => {
         await api.deleteCookie();
-        vscode.window.showInformationMessage('Successfully signed out.');
+        showTimedMessage('✅ Successfully signed out.');
         treeProvider.refresh();
+        updateStatusBar();
     }));
 
     // ==================== Auth Status Command ====================
@@ -247,21 +294,7 @@ export async function activate(context: vscode.ExtensionContext) {
             const sessionAge = api.getSessionAge();
             
             if (result.valid) {
-                let ageStr = 'Never verified';
-                if (sessionAge) {
-                    if (sessionAge.days > 0) {
-                        ageStr = `${sessionAge.days}d ${sessionAge.hours}h ago`;
-                    } else {
-                        ageStr = `${sessionAge.hours}h ago`;
-                    }
-                }
-                
-                vscode.window.showInformationMessage(
-                    `✅ LeetHelp Auth Status\n` +
-                    `User: ${result.username}\n` +
-                    `Last verified: ${ageStr}\n` +
-                    `Status: Valid`
-                );
+                showTimedMessage(`✅ Signed in as ${result.username}`);
             } else {
                 vscode.window.showErrorMessage(
                     `❌ LeetHelp: Auth invalid - ${result.error}`,
@@ -371,7 +404,14 @@ export async function activate(context: vscode.ExtensionContext) {
             return;
         }
 
+        const api = LeetCodeApi.getInstance();
+
         try {
+            // Auto-save before running
+            if (editor.document.isDirty) {
+                await editor.document.save();
+            }
+
             const { slug, lang } = parseFileInfo(editor.document.fileName);
             if (!slug) {
                 vscode.window.showErrorMessage('Could not determine problem from filename. Please open a file created by this extension.');
@@ -379,7 +419,6 @@ export async function activate(context: vscode.ExtensionContext) {
             }
 
             vscode.window.showInformationMessage(`Running tests for ${slug}...`);
-            const api = LeetCodeApi.getInstance();
             // Fetch detail to get questionId and exampleTestcases
             const detail = await api.getProblemDetail(slug);
 
@@ -424,13 +463,20 @@ export async function activate(context: vscode.ExtensionContext) {
 
                         if (result.code_answer !== undefined) {
                             outputChannel.appendLine('[Your Output]');
-                            outputChannel.appendLine(Array.isArray(result.code_answer) ? JSON.stringify(result.code_answer) : result.code_answer.toString());
+                            outputChannel.appendLine(Array.isArray(result.code_answer) ? JSON.stringify(result.code_answer) : String(result.code_answer));
                             outputChannel.appendLine('');
                         }
 
                         if (result.expected_code_answer !== undefined) {
                             outputChannel.appendLine('[Expected Output]');
-                            outputChannel.appendLine(Array.isArray(result.expected_code_answer) ? JSON.stringify(result.expected_code_answer) : result.expected_code_answer.toString());
+                            outputChannel.appendLine(Array.isArray(result.expected_code_answer) ? JSON.stringify(result.expected_code_answer) : String(result.expected_code_answer));
+                            outputChannel.appendLine('');
+                        }
+
+                        // Show stdout if any
+                        if (result.std_output) {
+                            outputChannel.appendLine('[Stdout]');
+                            outputChannel.appendLine(result.std_output);
                             outputChannel.appendLine('');
                         }
 
@@ -443,24 +489,201 @@ export async function activate(context: vscode.ExtensionContext) {
                     }
 
                     if (result.correct_answer) {
-                        vscode.window.showInformationMessage('Test Passed!');
+                        showTimedMessage('✅ Test Passed!');
                     } else {
-                        vscode.window.showWarningMessage('Test Finished (Check Output Panel)');
+                        showTimedMessage('⚠️ Test Finished (Check Output Panel)', 'warning');
                     }
                 } else {
-                    vscode.window.showErrorMessage(`Run Failed: ${result.error_msg || result.state || 'Timeout'}`);
+                    // Show error details
+                    const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
+                    outputChannel.show(true);
+                    outputChannel.appendLine('========================================');
+                    outputChannel.appendLine('         ❌  RUNTIME ERROR');
+                    outputChannel.appendLine('========================================');
+                    if (result.runtime_error) {
+                        outputChannel.appendLine(result.runtime_error);
+                    }
+                    if (result.compile_error) {
+                        outputChannel.appendLine('[Compile Error]');
+                        outputChannel.appendLine(result.compile_error);
+                    }
+                    if (result.full_compile_error) {
+                        outputChannel.appendLine(result.full_compile_error);
+                    }
+                    outputChannel.appendLine('========================================');
+                    vscode.window.showErrorMessage(`Run Failed: ${result.status_msg || result.error_msg || result.state || 'Unknown error'}`);
                 }
             });
 
         } catch (error: any) {
-            if (error.message && (error.message.includes('401') || error.message.includes('403') || error.message.includes('Auth'))) {
-                const selection = await vscode.window.showErrorMessage('Session Expired: Please sign in again.', 'Sign In');
+            // Enhanced error handling
+            const status = error.status || error.response?.status;
+            
+            if (status === 401 || status === 403) {
+                const selection = await vscode.window.showErrorMessage(
+                    error.message || 'Session Expired: Please sign in again.', 
+                    'Sign In'
+                );
                 if (selection === 'Sign In') {
                     vscode.commands.executeCommand('leethelp.signIn');
                 }
             } else {
                 api.log(`Error running code: ${error.message || error}`);
-                vscode.window.showErrorMessage('Error running code. Check Output panel for details.');
+                vscode.window.showErrorMessage(
+                    error.message || 'Error running code. Check Output panel for details.'
+                );
+            }
+        }
+    }));
+
+    // Run Custom Test Command
+    context.subscriptions.push(vscode.commands.registerCommand('leethelp.runCustomTest', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('Open a LeetCode problem file to run.');
+            return;
+        }
+
+        if (editor.document.uri.scheme === 'output') {
+            vscode.window.showWarningMessage('Please switch back to your code file before running tests.');
+            return;
+        }
+
+        const api = LeetCodeApi.getInstance();
+
+        try {
+            // Auto-save before running
+            if (editor.document.isDirty) {
+                await editor.document.save();
+            }
+
+            const { slug, lang } = parseFileInfo(editor.document.fileName);
+            if (!slug) {
+                vscode.window.showErrorMessage('Could not determine problem from filename.');
+                return;
+            }
+
+            // Fetch problem to get questionId and show example format
+            const detail = await api.getProblemDetail(slug);
+
+            // Show input box with example format
+            const customInput = await vscode.window.showInputBox({
+                prompt: `Enter custom test case (use \\n for newlines)`,
+                placeHolder: detail.exampleTestcases.split('\n').join('\\n'),
+                value: detail.exampleTestcases.split('\n').join('\\n'),
+                ignoreFocusOut: true
+            });
+
+            if (!customInput) {
+                return; // User cancelled
+            }
+
+            // Convert \n back to actual newlines
+            const dataInput = customInput.replace(/\\n/g, '\n');
+
+            vscode.window.showInformationMessage(`Running custom test for ${slug}...`);
+
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Running Custom Test...',
+                cancellable: false
+            }, async (progress) => {
+                const code = editor.document.getText();
+                const interpretId = await api.runCode(slug, detail.questionId, lang, code, dataInput);
+
+                // Poll for result
+                let result: any = { state: 'STARTED' };
+                let attempts = 0;
+                while ((result.state === 'STARTED' || result.state === 'PENDING') && attempts < 20) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    result = await api.checkStatus(interpretId);
+                    attempts++;
+                }
+
+                if (result.state === 'SUCCESS') {
+                    const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
+                    outputChannel.show(true);
+
+                    try {
+                        const statusIcon = result.correct_answer ? '✅' : '❌';
+                        const statusText = result.correct_answer ? 'CUSTOM TEST PASSED' : 'CUSTOM TEST FAILED';
+
+                        outputChannel.appendLine('========================================');
+                        outputChannel.appendLine(`    ${statusIcon}  ${statusText}`);
+                        outputChannel.appendLine('========================================');
+                        outputChannel.appendLine('');
+
+                        outputChannel.appendLine('[Custom Input]');
+                        outputChannel.appendLine(dataInput);
+                        outputChannel.appendLine('');
+
+                        if (result.code_answer !== undefined) {
+                            outputChannel.appendLine('[Your Output]');
+                            outputChannel.appendLine(Array.isArray(result.code_answer) ? JSON.stringify(result.code_answer) : String(result.code_answer));
+                            outputChannel.appendLine('');
+                        }
+
+                        if (result.expected_code_answer !== undefined) {
+                            outputChannel.appendLine('[Expected Output]');
+                            outputChannel.appendLine(Array.isArray(result.expected_code_answer) ? JSON.stringify(result.expected_code_answer) : String(result.expected_code_answer));
+                            outputChannel.appendLine('');
+                        }
+
+                        // Show stdout if any
+                        if (result.std_output) {
+                            outputChannel.appendLine('[Stdout]');
+                            outputChannel.appendLine(result.std_output);
+                            outputChannel.appendLine('');
+                        }
+
+                        outputChannel.appendLine('========================================');
+                    } catch (err: any) {
+                        outputChannel.appendLine(`Error formatting output: ${err.message}`);
+                    }
+
+                    if (result.correct_answer) {
+                        showTimedMessage('✅ Custom Test Passed!');
+                    } else {
+                        showTimedMessage('⚠️ Custom Test Finished (Check Output Panel)', 'warning');
+                    }
+                } else {
+                    // Show error details
+                    const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
+                    outputChannel.show(true);
+                    outputChannel.appendLine('========================================');
+                    outputChannel.appendLine('         ❌  RUNTIME ERROR');
+                    outputChannel.appendLine('========================================');
+                    if (result.runtime_error) {
+                        outputChannel.appendLine(result.runtime_error);
+                    }
+                    if (result.compile_error) {
+                        outputChannel.appendLine('[Compile Error]');
+                        outputChannel.appendLine(result.compile_error);
+                    }
+                    if (result.full_compile_error) {
+                        outputChannel.appendLine(result.full_compile_error);
+                    }
+                    outputChannel.appendLine('========================================');
+                    vscode.window.showErrorMessage(`Run Failed: ${result.status_msg || result.error_msg || result.state || 'Unknown error'}`);
+                }
+            });
+
+        } catch (error: any) {
+            const status = error.status || error.response?.status;
+            
+            if (status === 401 || status === 403) {
+                const selection = await vscode.window.showErrorMessage(
+                    error.message || 'Session Expired: Please sign in again.', 
+                    'Sign In'
+                );
+                if (selection === 'Sign In') {
+                    vscode.commands.executeCommand('leethelp.signIn');
+                }
+            } else {
+                api.log(`Error running custom test: ${error.message || error}`);
+                vscode.window.showErrorMessage(
+                    error.message || 'Error running custom test. Check Output panel for details.'
+                );
             }
         }
     }));
@@ -479,7 +702,14 @@ export async function activate(context: vscode.ExtensionContext) {
             return;
         }
 
+        const api = LeetCodeApi.getInstance();
+
         try {
+            // Auto-save before submitting
+            if (editor.document.isDirty) {
+                await editor.document.save();
+            }
+
             const { slug, lang } = parseFileInfo(editor.document.fileName);
             if (!slug) {
                 vscode.window.showErrorMessage('Could not determine problem from filename.');
@@ -487,7 +717,6 @@ export async function activate(context: vscode.ExtensionContext) {
             }
 
             vscode.window.showInformationMessage(`Submitting ${slug}...`);
-            const api = LeetCodeApi.getInstance();
             const detail = await api.getProblemDetail(slug);
 
             await vscode.window.withProgress({
@@ -507,7 +736,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
 
                 if (result.state === 'SUCCESS') {
-                    vscode.window.showInformationMessage(`Submission Status: ${result.status_msg}`);
+                    showTimedMessage(`📤 Submission: ${result.status_msg}`);
 
                     const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
                     outputChannel.show(true); // Preserve focus
@@ -558,14 +787,22 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
             });
         } catch (error: any) {
-            if (error.message && (error.message.includes('401') || error.message.includes('403') || error.message.includes('Auth'))) {
-                const selection = await vscode.window.showErrorMessage('Session Expired: Please sign in again.', 'Sign In');
+            // Enhanced error handling
+            const status = error.status || error.response?.status;
+            
+            if (status === 401 || status === 403) {
+                const selection = await vscode.window.showErrorMessage(
+                    error.message || 'Session Expired: Please sign in again.', 
+                    'Sign In'
+                );
                 if (selection === 'Sign In') {
                     vscode.commands.executeCommand('leethelp.signIn');
                 }
             } else {
                 api.log(`Error submitting code: ${error.message || error}`);
-                vscode.window.showErrorMessage('Error submitting code. Check Output panel for details.');
+                vscode.window.showErrorMessage(
+                    error.message || 'Error submitting code. Check Output panel for details.'
+                );
             }
         }
     }));
