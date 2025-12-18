@@ -91,6 +91,16 @@ function showTimedMessage(message: string, type: 'info' | 'warning' | 'error' = 
     });
 }
 
+// ==================== Shared Output Channel ====================
+let outputChannel: vscode.OutputChannel | undefined;
+
+function getOutputChannel(): vscode.OutputChannel {
+    if (!outputChannel) {
+        outputChannel = vscode.window.createOutputChannel('LeetCode');
+    }
+    return outputChannel;
+}
+
 export async function activate(context: vscode.ExtensionContext) {
     // Initialize API with SecretStorage
     const api = LeetCodeApi.getInstance();
@@ -443,7 +453,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
                 if (result.state === 'SUCCESS') {
                     // Show Output
-                    const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
+                    const outputChannel = getOutputChannel();
+                    outputChannel.clear();
                     outputChannel.show(true); // Preserve focus
 
                     try {
@@ -495,7 +506,8 @@ export async function activate(context: vscode.ExtensionContext) {
                     }
                 } else {
                     // Show error details
-                    const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
+                    const outputChannel = getOutputChannel();
+                    outputChannel.clear();
                     outputChannel.show(true);
                     outputChannel.appendLine('========================================');
                     outputChannel.appendLine('         ❌  RUNTIME ERROR');
@@ -601,7 +613,8 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
 
                 if (result.state === 'SUCCESS') {
-                    const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
+                    const outputChannel = getOutputChannel();
+                    outputChannel.clear();
                     outputChannel.show(true);
 
                     try {
@@ -648,7 +661,8 @@ export async function activate(context: vscode.ExtensionContext) {
                     }
                 } else {
                     // Show error details
-                    const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
+                    const outputChannel = getOutputChannel();
+                    outputChannel.clear();
                     outputChannel.show(true);
                     outputChannel.appendLine('========================================');
                     outputChannel.appendLine('         ❌  RUNTIME ERROR');
@@ -738,7 +752,8 @@ export async function activate(context: vscode.ExtensionContext) {
                 if (result.state === 'SUCCESS') {
                     showTimedMessage(`📤 Submission: ${result.status_msg}`);
 
-                    const outputChannel = vscode.window.createOutputChannel('LeetCode Output');
+                    const outputChannel = getOutputChannel();
+                    outputChannel.clear();
                     outputChannel.show(true); // Preserve focus
                     try {
                         outputChannel.appendLine('========================================');

@@ -1,0 +1,31 @@
+# Source files (we only need compiled dist/)
+src/**
+*.ts
+tsconfig.json
+
+# Development files
+.vscode/**
+.git/**
+.gitignore
+.DS_Store
+
+# Documentation (optional - remove if you want to include)
+docs/**
+
+# Node modules (dependencies are bundled)
+node_modules/**
+
+# Package files
+package-lock.json
+*.vsix
+
+# Test files
+**/*.test.ts
+**/*.test.js
+**/test/**
+
+# Other
+.eslintrc*
+.prettierrc*
+*.map
+dist/**/*.map
