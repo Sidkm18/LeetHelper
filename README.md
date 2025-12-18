@@ -69,6 +69,12 @@ Tips:
 
 ## Build from Source
 
+Prerequisites:
+- Node.js (LTS recommended)
+- VS Code
+- Optional (for packaging): `vsce` (we'll show both npx and global installs)
+
+Development setup:
 ```bash
 # Clone the repository
 git clone https://github.com/sidkm18/LeetHelper.git
@@ -77,9 +83,38 @@ cd LeetHelper
 # Install dependencies
 npm install
 
-# Compile
+# Compile once
 npm run compile
-# Press F5 in VS Code to run
+
+# OR compile continuously during development
+npm run watch
+```
+
+Run in VS Code (Debug):
+- Press F5 (Run Extension) to launch a new Extension Development Host with LeetHelp loaded.
+
+Package a VSIX (installable extension file):
+```bash
+# Using npx (no global install needed)
+npx @vscode/vsce package
+
+# Or, install vsce globally once and then package
+npm i -g @vscode/vsce
+vsce package
+```
+
+This creates a file like `leet-help-<version>.vsix` in the project root.
+
+Install the VSIX into your VS Code:
+```bash
+# Replace the filename with the VSIX that was generated
+code --install-extension leet-help-<version>.vsix --force
+```
+
+Update to a newly packaged build:
+```bash
+# Re-install the newly created VSIX
+code --install-extension leet-help-<version>.vsix --force
 ```
 
 ---
