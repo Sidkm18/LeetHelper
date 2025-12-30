@@ -1,7 +1,7 @@
 {
     "name": "leet-help",
     "displayName": "LeetHelp",
-    "publisher": "leethelp",
+    "publisher": "leet-help",
     "icon": "resources/icon.png",
     "description": "Solve LeetCode problems within VS Code",
     "repository": {
