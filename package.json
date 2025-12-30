@@ -6,9 +6,9 @@
     "description": "Solve LeetCode problems within VS Code",
     "repository": {
         "type": "git",
-        "url": "https://github.com/leethelp/leethelp"
+        "url": "https://github.com/sidkm18/LeetHelper"
     },
-    "version": "1.0.2",
+    "version": "1.1.0",
     "engines": {
         "vscode": "^1.80.0"
     },
@@ -23,6 +23,7 @@
         "onCommand:leethelp.dailyQuestion",
         "onCommand:leethelp.runTest",
         "onCommand:leethelp.runCustomTest",
+        "onCommand:leethelp.formatCode",
         "onCommand:leethelp.submit",
         "onCommand:leethelp.searchProblem",
         "onCommand:leethelp.refresh",
@@ -65,6 +66,16 @@
                 "icon": "$(cloud-upload)"
             },
             {
+                "command": "leethelp.formatCode",
+                "title": "LeetHelp: Format Code",
+                "icon": "$(indent)"
+            },
+            {
+                "command": "leethelp.customTestCases",
+                "title": "LeetHelp: Manage Saved Tests",
+                "icon": "$(list-unordered)"
+            },
+            {
                 "command": "leethelp.searchProblem",
                 "title": "LeetHelp: Search Problem",
                 "icon": "$(search)"
@@ -88,6 +99,10 @@
                 {
                     "command": "leethelp.runCustomTest",
                     "group": "navigation@2"
+                },
+                {
+                    "command": "leethelp.formatCode",
+                    "group": "navigation@2.5"
                 },
                 {
                     "command": "leethelp.submit",

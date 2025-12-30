@@ -153,7 +153,7 @@ export class LeetCodeApi {
             headers['Cookie'] = cookie;
             if (csrfToken) {
                 headers['x-csrftoken'] = csrfToken;
-                this.log(`[DEBUG] CSRF token extracted: ${csrfToken.substring(0, 8)}...`);
+                // Note: CSRF token presence logged for diagnostics (token value not exposed)
             } else {
                 this.log('[WARN] No CSRF token found in cookie - requests may fail');
             }
@@ -496,9 +496,7 @@ export class LeetCodeApi {
             this.log(`Error running code: ${this.redactUrl(error.message)}`);
             if (error.response) {
                 this.log(`Status: ${error.response.status}`);
-                if (error.response.data) {
-                    this.log(`Response: ${JSON.stringify(error.response.data)}`);
-                }
+                // Security: Don't log full response data, only safe fields
             }
             // Re-throw with enhanced error info
             const enhancedError: any = new Error(this.getErrorMessage(error));
@@ -556,9 +554,7 @@ export class LeetCodeApi {
             this.log(`Error submitting code: ${this.redactUrl(error.message)}`);
             if (error.response) {
                 this.log(`Status: ${error.response.status}`);
-                if (error.response.data) {
-                    this.log(`Response: ${JSON.stringify(error.response.data)}`);
-                }
+                // Security: Don't log full response data, only safe fields
             }
             // Re-throw with enhanced error info
             const enhancedError: any = new Error(this.getErrorMessage(error));

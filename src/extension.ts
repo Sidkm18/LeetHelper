@@ -4,7 +4,7 @@ import { LeetCodeApi, Question, QuestionDetail, SubmissionHistory } from './leet
 import { LeetCodeWebview } from './webviewPanel';
 import * as path from 'path';
 import * as fs from 'fs';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { LeetCodeCodeLensProvider } from './codelensProvider';
 
 // ==================== Local History ====================
@@ -40,6 +40,32 @@ function addToHistory(entry: SubmissionHistory): void {
     saveHistory(history);
 }
 
+// ==================== Custom Test Cases ====================
+interface CustomTestCase {
+    input: string;
+    output?: string;
+}
+
+// In-memory storage per problem - clears when VS Code closes
+const customTestsCache: Record<string, CustomTestCase[]> = {};
+
+function addCustomTestCase(problemSlug: string, input: string, output?: string): void {
+    console.log('Adding custom test case:', { problemSlug, input, output });
+    if (!customTestsCache[problemSlug]) {
+        customTestsCache[problemSlug] = [];
+    }
+    customTestsCache[problemSlug].push({ input, output });
+    console.log('Updated tests cache:', customTestsCache);
+}
+
+function getCustomTestCases(problemSlug: string): CustomTestCase[] {
+    return customTestsCache[problemSlug] || [];
+}
+
+function clearCustomTestCases(problemSlug: string): void {
+    delete customTestsCache[problemSlug];
+}
+
 // ==================== Git Auto-Commit ====================
 async function autoCommitOnAccepted(
     document: vscode.TextDocument,
@@ -48,29 +74,30 @@ async function autoCommitOnAccepted(
 ): Promise<void> {
     const filePath = document.uri.fsPath;
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    
+
     if (!workspaceFolder) return;
-    
+
     const cwd = workspaceFolder.uri.fsPath;
-    
+
     // Save the file first
     await document.save();
-    
+
     // Check if we're in a git repo
     try {
         execSync('git rev-parse --git-dir', { cwd, stdio: 'ignore' });
     } catch {
         return; // Not a git repo, skip silently
     }
-    
+
     // Format language for display
     const langDisplay = lang.charAt(0).toUpperCase() + lang.slice(1).replace('3', '');
     const commitMsg = `LC: ${problem.questionId}. ${problem.title} [${langDisplay}]`;
-    
+
     try {
-        execSync(`git add "${filePath}"`, { cwd, stdio: 'ignore' });
-        execSync(`git commit -m "${commitMsg}"`, { cwd, stdio: 'ignore' });
-        showTimedMessage(`✅ Committed: ${commitMsg}`, 'info', 10000);
+        // Security: Use execFileSync with array args to prevent command injection
+        execFileSync('git', ['add', filePath], { cwd, stdio: 'ignore' });
+        execFileSync('git', ['commit', '-m', commitMsg], { cwd, stdio: 'ignore' });
+        showTimedMessage(`Committed: ${commitMsg}`, 'info', 10000);
     } catch (err: any) {
         // Commit might fail if nothing changed - that's OK
         const api = LeetCodeApi.getInstance();
@@ -115,9 +142,9 @@ async function verifyCookieCommand(): Promise<void> {
 
     logOutput.appendLine('Checking stored cookie...');
     const result = await api.verifyAuth();
-    
+
     if (result.valid) {
-        logOutput.appendLine(`✅ Auth valid. Signed in as: ${result.username}`);
+        logOutput.appendLine(`Auth valid. Signed in as: ${result.username}`);
         logOutput.appendLine('');
         logOutput.appendLine('If you still see Cloudflare 403 errors:');
         logOutput.appendLine('1. Open https://leetcode.com in your browser.');
@@ -126,7 +153,7 @@ async function verifyCookieCommand(): Promise<void> {
         logOutput.appendLine('4. Run LeetHelp: Sign In and paste the cookie.');
         logOutput.appendLine('5. Make sure the cookie contains cf_clearance, LEETCODE_SESSION, and csrftoken.');
     } else {
-        logOutput.appendLine(`❌ Auth invalid: ${result.error}`);
+        logOutput.appendLine(`Auth invalid: ${result.error}`);
         logOutput.appendLine('Please sign in again and make sure to copy the full Cookie from your browser.');
     }
 }
@@ -155,17 +182,46 @@ function sanitizeCode(raw: string): { code: string; modified: boolean } {
     return { code, modified };
 }
 
+function formatCodeLikeLC(raw: string): string {
+    let code = raw;
+
+    // 1. Sanitize hidden characters
+    const { code: sanitized } = sanitizeCode(code);
+    code = sanitized;
+
+    // 2. Normalize newlines (ensure \n)
+    code = code.replace(/\r\n?/g, '\n');
+
+    // 3. Replace tabs with 4 spaces
+    code = code.replace(/\t/g, '    ');
+
+    // 4. Trim trailing whitespace from each line
+    code = code.split('\n').map(line => line.trimEnd()).join('\n');
+
+    // 5. Collapse multiple consecutive blank lines into single blank line
+    code = code.replace(/\n\n\n+/g, '\n\n');
+
+    // 6. Ensure single trailing newline
+    code = code.replace(/\n*$/, '\n');
+
+    return code;
+}
+
 function likelyNeedsLcWrapper(lang: string, code: string): boolean {
     // Heuristics for common LC wrappers
-    if (lang === 'java' || lang === 'cpp' || lang === 'typescript' || lang === 'javascript') {
+    if (lang === 'java' || lang === 'cpp' || lang === 'c' || lang === 'csharp' || lang === 'typescript' || lang === 'javascript') {
         return !/\bclass\s+Solution\b/.test(code);
     }
     if (lang === 'python3' || lang === 'python') {
         // Either class Solution: or def within class
         return !(/\bclass\s+Solution\b/.test(code));
     }
-    if (lang === 'golang') {
+    if (lang === 'golang' || lang === 'go') {
         // Go uses functions, but often expects method receivers; skip strict checks
+        return false;
+    }
+    if (lang === 'ruby' || lang === 'rust' || lang === 'php' || lang === 'swift' || lang === 'kotlin' || lang === 'scala' || lang === 'dart' || lang === 'elixir' || lang === 'erlang' || lang === 'racket') {
+        // These languages typically use function/struct wrappers; skip strict checks
         return false;
     }
     return false;
@@ -190,7 +246,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // Check if session might be expired
         if (api.isSessionPossiblyExpired()) {
             vscode.window.showWarningMessage(
-                '⚠️ LeetHelp: Session may be expired. Re-auth recommended.',
+                'LeetHelp: Session may be expired. Re-authentication recommended.',
                 'Sign In', 'Check Status'
             ).then(selection => {
                 if (selection === 'Sign In') {
@@ -303,7 +359,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const codeLensProvider = new LeetCodeCodeLensProvider();
     context.subscriptions.push(
         vscode.languages.registerCodeLensProvider(
-            [{ scheme: 'file', language: 'python' }, { scheme: 'file', language: 'cpp' }, { scheme: 'file', language: 'java' }, { scheme: 'file', language: 'javascript' }, { scheme: 'file', language: 'typescript' }, { scheme: 'file', language: 'go' }],
+            [{ scheme: 'file', language: 'python' }, { scheme: 'file', language: 'cpp' }, { scheme: 'file', language: 'c' }, { scheme: 'file', language: 'csharp' }, { scheme: 'file', language: 'java' }, { scheme: 'file', language: 'javascript' }, { scheme: 'file', language: 'typescript' }, { scheme: 'file', language: 'go' }, { scheme: 'file', language: 'ruby' }, { scheme: 'file', language: 'rust' }, { scheme: 'file', language: 'php' }, { scheme: 'file', language: 'swift' }, { scheme: 'file', language: 'kotlin' }, { scheme: 'file', language: 'scala' }, { scheme: 'file', language: 'dart' }, { scheme: 'file', language: 'elixir' }, { scheme: 'file', language: 'erlang' }, { scheme: 'file', language: 'racket' }],
             codeLensProvider
         )
     );
@@ -334,7 +390,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 const user = await api.getUser();
 
                 if (user) {
-                    showTimedMessage(`✅ Successfully signed in as ${user.username}!`);
+                    showTimedMessage(`Successfully signed in as ${user.username}`);
                     treeProvider.refresh();
                     updateStatusBar();
                 } else {
@@ -349,7 +405,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Sign Out Command
     context.subscriptions.push(vscode.commands.registerCommand('leethelp.signOut', async () => {
         await api.deleteCookie();
-        showTimedMessage('✅ Successfully signed out.');
+        showTimedMessage('Successfully signed out.');
         treeProvider.refresh();
         updateStatusBar();
     }));
@@ -372,12 +428,12 @@ export async function activate(context: vscode.ExtensionContext) {
         }, async () => {
             const result = await api.verifyAuth();
             const sessionAge = api.getSessionAge();
-            
+
             if (result.valid) {
-                showTimedMessage(`✅ Signed in as ${result.username}`);
+                showTimedMessage(`Signed in as ${result.username}`);
             } else {
                 vscode.window.showErrorMessage(
-                    `❌ LeetHelp: Auth invalid - ${result.error}`,
+                    `LeetHelp: Authentication invalid - ${result.error}`,
                     'Sign In'
                 ).then(selection => {
                     if (selection === 'Sign In') {
@@ -403,7 +459,7 @@ export async function activate(context: vscode.ExtensionContext) {
             try {
                 const daily = await api.getDailyQuestion();
                 const question: Question = daily.question;
-                
+
                 // Open it like any other problem
                 vscode.commands.executeCommand('leethelp.openProblem', question);
             } catch (error: any) {
@@ -447,7 +503,7 @@ export async function activate(context: vscode.ExtensionContext) {
                         }
                         const fileName = `${question.titleSlug}${ext}`;
                         const filePath = path.join(rootPath, fileName);
-                        
+
                         // Security: Double-check resolved path stays within workspace
                         const resolvedPath = path.resolve(filePath);
                         const resolvedRoot = path.resolve(rootPath);
@@ -526,7 +582,20 @@ export async function activate(context: vscode.ExtensionContext) {
                     );
                 }
                 const code = codeSanitized;
-                const dataInput = detail.exampleTestcases;
+                let dataInput = detail.exampleTestcases;
+
+                // Append custom test cases to run them all in one request
+                const customTests = getCustomTestCases(slug);
+                const exampleCount = dataInput.split('\n').filter((line: string) => line.trim()).length > 0
+                    ? dataInput.trim().split('\n\n').length || 1
+                    : 0;
+
+                if (customTests.length > 0) {
+                    // Append custom inputs (separated by newlines)
+                    for (const test of customTests) {
+                        dataInput = dataInput.trim() + '\n' + test.input.trim();
+                    }
+                }
 
                 const interpretId = await api.runCode(slug, detail.questionId, lang, code, dataInput);
 
@@ -546,15 +615,34 @@ export async function activate(context: vscode.ExtensionContext) {
                     outputChannel.show(true); // Preserve focus
 
                     try {
-                        const statusIcon = result.correct_answer ? '✅' : '❌';
-                        const statusText = result.correct_answer ? 'TEST PASSED' : 'TEST FAILED';
+                        const statusIcon = result.correct_answer ? '✓' : '✗';
+                        const statusText = result.correct_answer ? 'ALL TESTS PASSED' : 'TEST FAILED';
+                        const exampleTestCount = detail.exampleTestcases.trim().split('\n').filter((l: string) => l.trim()).length;
+                        const customTestCount = customTests.length;
+                        const totalTests = result.total_testcases || (exampleTestCount + customTestCount);
 
                         outputChannel.appendLine('========================================');
-                        outputChannel.appendLine(`      ${statusIcon}  ${statusText.padEnd(20)}`);
+                        outputChannel.appendLine(`      ${statusIcon}  ${statusText}`);
                         outputChannel.appendLine('========================================');
+                        if (customTestCount > 0) {
+                            outputChannel.appendLine(`Tests: ${totalTests} total (Examples + ${customTestCount} custom)`);
+                        }
                         outputChannel.appendLine('');
 
-                        if (dataInput) {
+                        // Show which test case failed if available
+                        if (!result.correct_answer && (result.total_correct !== undefined && result.total_testcases !== undefined)) {
+                            outputChannel.appendLine(`[Test Case Result]`);
+                            outputChannel.appendLine(`Passed: ${result.total_correct}/${result.total_testcases} test cases`);
+                            outputChannel.appendLine(`Failed at: Test Case ${result.total_correct + 1}`);
+                            outputChannel.appendLine('');
+                        }
+
+                        // Show the actual failing test case input
+                        if (result.last_testcase !== undefined) {
+                            outputChannel.appendLine('[Failed Test Case Input]');
+                            outputChannel.appendLine(result.last_testcase);
+                            outputChannel.appendLine('');
+                        } else if (dataInput) {
                             outputChannel.appendLine('[Input]');
                             outputChannel.appendLine(typeof dataInput === 'object' ? JSON.stringify(dataInput, null, 2) : dataInput.toString());
                             outputChannel.appendLine('');
@@ -579,6 +667,12 @@ export async function activate(context: vscode.ExtensionContext) {
                             outputChannel.appendLine('');
                         }
 
+                        // Show status message for additional context
+                        if (result.status_msg && result.status_msg !== 'Accepted') {
+                            outputChannel.appendLine(`[Status: ${result.status_msg}]`);
+                            outputChannel.appendLine('');
+                        }
+
                         outputChannel.appendLine('========================================');
                     } catch (err: any) {
                         outputChannel.appendLine(`Error formatting output: ${err.message}`);
@@ -588,9 +682,35 @@ export async function activate(context: vscode.ExtensionContext) {
                     }
 
                     if (result.correct_answer) {
-                        showTimedMessage('✅ Test Passed!');
+                        if (customTests.length > 0) {
+                            const clearChoice = await vscode.window.showInformationMessage(
+                                `All ${result.total_testcases || 'tests'} passed (including ${customTests.length} custom)`,
+                                'Clear Custom Tests',
+                                'Keep'
+                            );
+                            if (clearChoice === 'Clear Custom Tests') {
+                                clearCustomTestCases(slug);
+                                vscode.window.showInformationMessage('Custom tests cleared');
+                            }
+                        } else {
+                            showTimedMessage('All tests passed');
+                        }
                     } else {
-                        showTimedMessage('⚠️ Test Finished (Check Output Panel)', 'warning');
+                        // Test failed - offer to save as custom test case
+                        const choice = await vscode.window.showWarningMessage(
+                            'Test Failed. Save to custom test cases?',
+                            'Save Test Case',
+                            'Dismiss'
+                        );
+                        if (choice === 'Save Test Case') {
+                            // Use the actual failing test case if available
+                            const failingInput = result.last_testcase || dataInput || '';
+                            console.log('Saving test case for slug:', slug);
+                            addCustomTestCase(slug, failingInput, result.expected_code_answer ? String(result.expected_code_answer) : '');
+                            console.log('After adding, cache is:', customTestsCache);
+                            vscode.window.showInformationMessage(`Failed test case saved to custom tests`);
+                        }
+                        showTimedMessage('Test Finished (Check Output Panel)', 'warning');
                     }
                 } else {
                     // Show error details
@@ -618,10 +738,10 @@ export async function activate(context: vscode.ExtensionContext) {
         } catch (error: any) {
             // Enhanced error handling
             const status = error.status || error.response?.status;
-            
+
             if (status === 401 || status === 403) {
                 const selection = await vscode.window.showErrorMessage(
-                    error.message || 'Session Expired: Please sign in again.', 
+                    error.message || 'Session Expired: Please sign in again.',
                     'Sign In'
                 );
                 if (selection === 'Sign In') {
@@ -719,7 +839,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     outputChannel.show(true);
 
                     try {
-                        const statusIcon = result.correct_answer ? '✅' : '❌';
+                        const statusIcon = result.correct_answer ? '✓' : '✗';
                         const statusText = result.correct_answer ? 'CUSTOM TEST PASSED' : 'CUSTOM TEST FAILED';
 
                         outputChannel.appendLine('========================================');
@@ -756,9 +876,9 @@ export async function activate(context: vscode.ExtensionContext) {
                     }
 
                     if (result.correct_answer) {
-                        showTimedMessage('✅ Custom Test Passed!');
+                        showTimedMessage('Custom Test Passed');
                     } else {
-                        showTimedMessage('⚠️ Custom Test Finished (Check Output Panel)', 'warning');
+                        showTimedMessage('Custom Test Finished (Check Output Panel)', 'warning');
                     }
                 } else {
                     // Show error details
@@ -785,10 +905,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
         } catch (error: any) {
             const status = error.status || error.response?.status;
-            
+
             if (status === 401 || status === 403) {
                 const selection = await vscode.window.showErrorMessage(
-                    error.message || 'Session Expired: Please sign in again.', 
+                    error.message || 'Session Expired: Please sign in again.',
                     'Sign In'
                 );
                 if (selection === 'Sign In') {
@@ -800,6 +920,159 @@ export async function activate(context: vscode.ExtensionContext) {
                     error.message || 'Error running custom test. Check Output panel for details.'
                 );
             }
+        }
+    }));
+
+    // Format Code Command
+    context.subscriptions.push(vscode.commands.registerCommand('leethelp.formatCode', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('Open a file to format code.');
+            return;
+        }
+
+        try {
+            // Try to use VS Code's built-in formatter to fix indentation
+            // This may not work for all languages (e.g., Elixir, Erlang, Racket)
+            try {
+                await vscode.commands.executeCommand('editor.action.formatDocument');
+            } catch (e) {
+                // Formatter not available for this language, continue with LeetCode cleanup
+            }
+
+            // Then apply LeetCode-specific cleanup (tabs→4spaces, trailing whitespace, etc.)
+            const rawCode = editor.document.getText();
+            const formattedCode = formatCodeLikeLC(rawCode);
+
+            if (rawCode !== formattedCode) {
+                const lastLine = editor.document.lineCount - 1;
+                const lastChar = editor.document.lineAt(lastLine).text.length;
+                const fullRange = new vscode.Range(0, 0, lastLine, lastChar);
+
+                await editor.edit(editBuilder => {
+                    editBuilder.replace(fullRange, formattedCode);
+                });
+            }
+
+            vscode.window.showInformationMessage('Code Formatted');
+        } catch (error: any) {
+            vscode.window.showErrorMessage(`Format failed: ${error.message}`);
+        }
+    }));
+
+    // Custom Test Cases Command
+    context.subscriptions.push(vscode.commands.registerCommand('leethelp.customTestCases', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('Open a LeetCode problem file first.');
+            return;
+        }
+
+        try {
+            const { slug } = parseFileInfo(editor.document.fileName);
+            if (!slug) {
+                vscode.window.showErrorMessage('Could not determine problem from filename.');
+                return;
+            }
+
+            console.log('Getting custom tests for slug:', slug);
+            const customTests = getCustomTestCases(slug);
+            console.log('Custom tests found:', customTests);
+            if (customTests.length === 0) {
+                vscode.window.showInformationMessage('No custom test cases saved for this problem.');
+                return;
+            }
+
+            const choice = await vscode.window.showQuickPick(
+                ['View Saved Test Cases', 'Run All Custom Tests', 'Clear All Test Cases'],
+                { placeHolder: 'Custom Test Cases' }
+            );
+
+            if (choice === 'View Saved Test Cases') {
+                const outputChannel = getOutputChannel();
+                outputChannel.clear();
+                outputChannel.show(true);
+                outputChannel.appendLine('========================================');
+                outputChannel.appendLine(`  SAVED CUSTOM TEST CASES (${customTests.length})`);
+                outputChannel.appendLine('========================================\n');
+
+                customTests.forEach((test, idx) => {
+                    outputChannel.appendLine(`Test Case ${idx + 1}:`);
+                    outputChannel.appendLine('[Input]');
+                    outputChannel.appendLine(test.input);
+                    outputChannel.appendLine('[Expected Output]');
+                    outputChannel.appendLine(test.output || '(none)');
+                    outputChannel.appendLine('');
+                });
+            } else if (choice === 'Run All Custom Tests') {
+                // Run all custom tests
+                const detail = await (LeetCodeApi.getInstance() as any).getProblemDetail(slug);
+                const outputChannel = getOutputChannel();
+                outputChannel.clear();
+                outputChannel.show(true);
+                outputChannel.appendLine('========================================');
+                outputChannel.appendLine(`  RUNNING ${customTests.length} CUSTOM TESTS`);
+                outputChannel.appendLine('========================================\n');
+
+                let passCount = 0;
+                for (let idx = 0; idx < customTests.length; idx++) {
+                    const test = customTests[idx];
+                    outputChannel.appendLine(`\n[Test Case ${idx + 1}]`);
+                    outputChannel.appendLine('Input:');
+                    outputChannel.appendLine(test.input);
+
+                    try {
+                        const { lang } = parseFileInfo(editor.document.fileName);
+                        const code = editor.document.getText();
+
+                        const interpretId = await (LeetCodeApi.getInstance() as any).runCode(slug, detail.questionId, lang, code, test.input);
+
+                        let result: any = { state: 'STARTED' };
+                        let attempts = 0;
+                        while ((result.state === 'STARTED' || result.state === 'PENDING') && attempts < 20) {
+                            await new Promise(r => setTimeout(r, 1000));
+                            result = await (LeetCodeApi.getInstance() as any).checkStatus(interpretId);
+                            attempts++;
+                        }
+
+                        if (result.state === 'SUCCESS') {
+                            const passed = !test.output || String(result.code_answer).trim() === test.output.trim();
+                            outputChannel.appendLine(`Status: ${passed ? '✓ PASSED' : '✗ FAILED'}`);
+                            outputChannel.appendLine(`Output: ${result.code_answer}`);
+                            if (test.output) {
+                                outputChannel.appendLine(`Expected: ${test.output}`);
+                            }
+                            if (passed) passCount++;
+                        } else {
+                            outputChannel.appendLine(`Status: ERROR - ${result.status_msg || result.error_msg || 'Unknown error'}`);
+                        }
+                    } catch (err: any) {
+                        outputChannel.appendLine(`Status: ERROR - ${err.message}`);
+                    }
+                }
+
+                outputChannel.appendLine('\n========================================');
+                outputChannel.appendLine(`RESULTS: ${passCount}/${customTests.length} tests passed`);
+                outputChannel.appendLine('========================================');
+
+                if (passCount === customTests.length) {
+                    showTimedMessage(`All ${customTests.length} custom tests passed!`);
+                } else {
+                    showTimedMessage(`${customTests.length - passCount} custom tests failed`, 'warning');
+                }
+            } else if (choice === 'Clear All Test Cases') {
+                const confirm = await vscode.window.showWarningMessage(
+                    `Delete all ${customTests.length} custom test cases?`,
+                    'Delete',
+                    'Cancel'
+                );
+                if (confirm === 'Delete') {
+                    clearCustomTestCases(slug);
+                    vscode.window.showInformationMessage('Custom test cases cleared');
+                }
+            }
+        } catch (error: any) {
+            vscode.window.showErrorMessage(`Error: ${error.message}`);
         }
     }));
 
@@ -880,6 +1153,58 @@ export async function activate(context: vscode.ExtensionContext) {
                         outputChannel.appendLine(`Status: ${result.status_msg}`);
                         outputChannel.appendLine(`Passed: ${result.total_correct}/${result.total_testcases} test cases`);
 
+                        // Show which test case failed for Wrong Answer, Runtime Error, etc.
+                        if (result.status_msg !== 'Accepted' && result.total_correct !== undefined && result.total_testcases !== undefined) {
+                            outputChannel.appendLine(`Failed at: Test Case ${result.total_correct + 1}`);
+                            outputChannel.appendLine('');
+
+                            // Show the failing test case if available
+                            if (result.last_testcase !== undefined) {
+                                outputChannel.appendLine('[Failed Test Case Input]');
+                                outputChannel.appendLine(result.last_testcase);
+                                outputChannel.appendLine('');
+
+                                // Offer to save the failing test case
+                                const saveChoice = await vscode.window.showInformationMessage(
+                                    'Save failed test case?',
+                                    'Save Test Case',
+                                    'Cancel'
+                                );
+
+                                if (saveChoice === 'Save Test Case') {
+                                    const expectedOutput = result.expected_code_answer !== undefined
+                                        ? (Array.isArray(result.expected_code_answer) ? JSON.stringify(result.expected_code_answer) : String(result.expected_code_answer))
+                                        : undefined;
+                                    addCustomTestCase(detail.titleSlug, result.last_testcase, expectedOutput);
+                                    vscode.window.showInformationMessage('Test case saved to custom tests');
+                                }
+                            }
+
+                            if (result.code_answer !== undefined) {
+                                outputChannel.appendLine('[Your Output]');
+                                outputChannel.appendLine(Array.isArray(result.code_answer) ? JSON.stringify(result.code_answer) : String(result.code_answer));
+                                outputChannel.appendLine('');
+                            }
+
+                            if (result.expected_code_answer !== undefined) {
+                                outputChannel.appendLine('[Expected Output]');
+                                outputChannel.appendLine(Array.isArray(result.expected_code_answer) ? JSON.stringify(result.expected_code_answer) : String(result.expected_code_answer));
+                                outputChannel.appendLine('');
+                            }
+
+                            if (result.std_output) {
+                                outputChannel.appendLine('[Stdout]');
+                                outputChannel.appendLine(result.std_output);
+                                outputChannel.appendLine('');
+                            }
+
+                            if (result.runtime_error) {
+                                outputChannel.appendLine('[Runtime Error]');
+                                outputChannel.appendLine(result.runtime_error);
+                                outputChannel.appendLine('');
+                            }
+                        }
+
                         if (result.status_msg === 'Accepted') {
                             if (result.status_runtime) {
                                 outputChannel.appendLine(`Runtime: ${result.status_runtime}`);
@@ -887,10 +1212,10 @@ export async function activate(context: vscode.ExtensionContext) {
                             if (result.status_memory) {
                                 outputChannel.appendLine(`Memory:  ${result.status_memory}`);
                             }
-                            
+
                             // ==================== Git Auto-Commit on AC ====================
                             await autoCommitOnAccepted(editor.document, detail, lang);
-                            
+
                             // ==================== Local History ====================
                             addToHistory({
                                 id: parseInt(detail.questionId, 10),
@@ -922,10 +1247,10 @@ export async function activate(context: vscode.ExtensionContext) {
         } catch (error: any) {
             // Enhanced error handling
             const status = error.status || error.response?.status;
-            
+
             if (status === 401 || status === 403) {
                 const selection = await vscode.window.showErrorMessage(
-                    error.message || 'Session Expired: Please sign in again.', 
+                    error.message || 'Session Expired: Please sign in again.',
                     'Sign In'
                 );
                 if (selection === 'Sign In') {
@@ -949,11 +1274,23 @@ function parseFileInfo(fileName: string): { slug: string, lang: string } {
     // Reverse map extension to lang slug
     let lang = '';
     if (ext === '.cpp') lang = 'cpp';
+    else if (ext === '.c') lang = 'c';
+    else if (ext === '.cs') lang = 'csharp';
     else if (ext === '.java') lang = 'java';
     else if (ext === '.js') lang = 'javascript';
     else if (ext === '.ts') lang = 'typescript';
     else if (ext === '.go') lang = 'golang';
     else if (ext === '.py') lang = 'python3';
+    else if (ext === '.rb') lang = 'ruby';
+    else if (ext === '.rs') lang = 'rust';
+    else if (ext === '.php') lang = 'php';
+    else if (ext === '.swift') lang = 'swift';
+    else if (ext === '.kt') lang = 'kotlin';
+    else if (ext === '.scala') lang = 'scala';
+    else if (ext === '.dart') lang = 'dart';
+    else if (ext === '.ex') lang = 'elixir';
+    else if (ext === '.erl') lang = 'erlang';
+    else if (ext === '.rkt') lang = 'racket';
 
     // Fallback or error?
     // If unknown, default to python3 as before BUT audit said "unknown extensions silently default to python3" is a Medium issue.
@@ -993,7 +1330,11 @@ function getExtension(langSlug: string): string {
         'kotlin': '.kt',
         'scala': '.scala',
         'rust': '.rs',
-        'php': '.php'
+        'php': '.php',
+        'dart': '.dart',
+        'elixir': '.ex',
+        'erlang': '.erl',
+        'racket': '.rkt'
     };
     return map[langSlug] || '.txt';
 }

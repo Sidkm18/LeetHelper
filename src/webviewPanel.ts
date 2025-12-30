@@ -14,12 +14,20 @@ export class LeetCodeWebview {
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionUri: vscode.Uri;
     private _disposables: vscode.Disposable[] = [];
+    private _question: QuestionDetail | undefined;
 
     private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
         this._panel = panel;
         this._extensionUri = extensionUri;
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+
+        // Listen for messages from webview
+        this._panel.webview.onDidReceiveMessage(message => {
+            if (message.command === 'startCoding') {
+                vscode.commands.executeCommand('leethelp.openProblem', this._question);
+            }
+        }, null, this._disposables);
     }
 
     public static createOrShow(extensionUri: vscode.Uri, question: QuestionDetail) {
@@ -50,6 +58,7 @@ export class LeetCodeWebview {
     }
 
     public update(question: QuestionDetail) {
+        this._question = question;
         this._panel.title = `LeetCode: ${question.title}`;
         this._panel.webview.html = this._getHtmlForWebview(question);
     }
@@ -66,11 +75,17 @@ export class LeetCodeWebview {
     }
 
     private _getHtmlForWebview(question: QuestionDetail) {
+        const questionJson = JSON.stringify({
+            titleSlug: question.titleSlug,
+            questionId: question.questionId,
+            title: question.title
+        });
+
         return `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https://leetcode.com https://assets.leetcode.com; script-src 'none';">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https://leetcode.com https://assets.leetcode.com; script-src 'unsafe-inline';">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>${DOMPurify.sanitize(question.title, { ALLOWED_TAGS: [] })}</title>
             <style>
@@ -130,6 +145,38 @@ export class LeetCodeWebview {
                 
                 ul, ol { padding-left: 20px; }
                 li { margin-bottom: 4px; }
+                
+                .button-container {
+                    margin-top: 40px;
+                    padding-top: 30px;
+                    border-top: 1px solid var(--vscode-widget-border);
+                    display: flex;
+                    justify-content: center;
+                }
+                
+                .start-button {
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border: none;
+                    padding: 8px 24px;
+                    border-radius: 2px;
+                    cursor: pointer;
+                    font-size: 0.95em;
+                    font-weight: 500;
+                    letter-spacing: 0.5px;
+                    transition: all 0.15s ease;
+                    font-family: var(--vscode-font-family);
+                }
+                
+                .start-button:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                    transform: translateY(-1px);
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+                }
+                
+                .start-button:active {
+                    transform: translateY(0);
+                }
             </style>
         </head>
         <body>
@@ -138,7 +185,22 @@ export class LeetCodeWebview {
                 <span class="difficulty ${getSafeDifficulty(question.difficulty)}">${DOMPurify.sanitize(question.difficulty, { ALLOWED_TAGS: [] })}</span>
             </div>
             <hr/>
-            <div class="content">${question.content}</div>
+            <div class="content">${DOMPurify.sanitize(question.content, {
+            ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'b', 'i', 'u', 'code', 'pre', 'ul', 'ol', 'li', 'sup', 'sub', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'h1', 'h2', 'h3', 'h4', 'span', 'div', 'font'],
+            ALLOWED_ATTR: ['src', 'alt', 'class', 'style', 'colspan', 'rowspan'],
+            ALLOW_DATA_ATTR: false
+        })}</div>
+            <div class="button-container">
+                <button class="start-button" onclick="startCoding()">Start Coding</button>
+            </div>
+            <script>
+                const vscode = acquireVsCodeApi();
+                const questionData = ${questionJson};
+                
+                function startCoding() {
+                    vscode.postMessage({ command: 'startCoding' });
+                }
+            </script>
         </body>
         </html>`;
     }
