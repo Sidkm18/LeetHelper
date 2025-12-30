@@ -368,7 +368,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('leethelp.signIn', async () => {
         const session = await vscode.window.showInputBox({
             placeHolder: 'Paste your full Cookie header value here',
-            prompt: 'Browser -> Inspect -> Network -> Request Headers -> Cookie',
+            prompt: 'This cookie grants access to your LeetCode account. Never share it.',
             ignoreFocusOut: true,
             password: true
         });
