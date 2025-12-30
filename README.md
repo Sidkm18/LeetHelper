@@ -75,7 +75,10 @@ See detailed test results with input/output comparison.
 3. Click any request → Copy the full **Cookie** header value
 4. In VS Code: `Ctrl+Shift+P` / `Cmd+Shift+P` → `LeetHelp: Sign In` → Paste
 
-> ⚠️ **Tip:** If you get 403 errors, your cookie expired. Just re-copy a fresh one.
+> ⚠️ Your cookie must contain these 3 values:
+> - `LEETCODE_SESSION` — your login session
+> - `csrftoken` — for API requests  
+> - `cf_clearance` — Cloudflare token (expires often, re-copy if you get 403 errors)
 
 ### 2. Solve Problems
 
