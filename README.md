@@ -1,5 +1,6 @@
 # LeetHelp
 
+A Simple VS GUI to Solve LeetCode, for those who hate the browser interface
 Solve LeetCode problems directly in VS Code. Browse, test, and submit — all without leaving your editor.
 
 ![LeetHelp Demo](resources/demo.gif)
